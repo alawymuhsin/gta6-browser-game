@@ -1,164 +1,173 @@
-// Solara Bay's layout: a grid of roads, the blocks between them with their
-// buildings and parks, the bay along the south shore, and the landmarks the
-// story walks the player between. One seed always deals the same town, so a
-// staged screenshot and a live run see the same streets. Eight districts,
-// each with its own roof colours, so the quarters read apart from above.
+// Solara Bay — the city itself. A fixed 4096 by 4096 grid: nine roads each way, eight
+// districts, buildings packed into the blocks between roads, a few parks, and eleven
+// landmarks on road crossings. Everything here derives from one seed, so the same seed
+// always builds the same city: buildCity owns its own random stream and consumes it in a
+// fixed order (blocks row by row, then parks, then trees), so a later change in how cars
+// or pedestrians are spawned can never shift a wall.
 
+import { createRandom } from './random.js';
 import { DISTRICT_ROOFS, WORLD } from './config.js';
-import { pickInt, pickOne } from './random.js';
 
-const TREES_PER_PARK = 7;
-
-/** South of this y is water; nothing is ever built past it. */
 export const WATER_Y = 3840;
 
-/** The eight districts, in the order the HUD's location line names them. */
-export const DISTRICTS = ['Old Town', 'Downtown', 'Industrial', 'Marina', 'Calle Ocho', 'Northside', 'Portside', 'Vista Heights'];
+// The eight districts, in the order they are laid down: the smaller ones (Vista Heights,
+// Portside) are listed last so they win where they overlap the bigger ones.
+const DISTRICTS = [
+  { name: 'Old Town', x0: 0, y0: 0, x1: 1536, y1: 1536 },
+  { name: 'Downtown', x0: 1536, y0: 0, x1: 4096, y1: 1536 },
+  { name: 'Industrial', x0: 2560, y0: 1536, x1: 4096, y1: 3584 },
+  { name: 'Calle Ocho', x0: 0, y0: 1536, x1: 1536, y1: 3584 },
+  { name: 'Northside', x0: 1536, y0: 1536, x1: 2560, y1: 3584 },
+  { name: 'Marina', x0: 0, y0: 3584, x1: 4096, y1: 4096 },
+  { name: 'Vista Heights', x0: 3072, y0: 0, x1: 4096, y1: 1536 },
+  { name: 'Portside', x0: 2560, y0: 3584, x1: 4096, y1: 4096 },
+];
 
-/** Landmarks, each sitting on a road corner so the player can always drive up to them. */
-const SPOTS = {
-  garage: { x: 1024, y: 1536, label: "Maya's Garage" },
-  bank: { x: 2048, y: 2048, label: 'Solara Bank' },
-  hospital: { x: 3072, y: 1024, label: 'St. Anselm Hospital' },
-  policeHq: { x: 1024, y: 2560, label: 'Police HQ' },
-  safehouse: { x: 512, y: 3072, label: 'Safehouse' },
-  vipers: { x: 3584, y: 2560, label: 'Viper Turf' },
-  diner: { x: 1536, y: 3072, label: 'Blue Diner' },
-  port: { x: 2560, y: 3584, label: 'Port Gate' },
-  raceGate: { x: 1024, y: 3584, label: 'Race Gate' },
-  market: { x: 512, y: 2048, label: 'Calle Ocho Market' },
-  university: { x: 2048, y: 512, label: 'Northside University' },
-  observatory: { x: 3584, y: 512, label: 'Vista Observatory' },
-};
+// ------------------------------------------------------------------ the build
 
-/**
- * Which district a point falls in. The far south shore is Marina (Portside
- * past the east yards), the north-east rise is Vista Heights, the north
- * centre is Northside, the west strip is Calle Ocho, the east yards are
- * Industrial, and the middle splits into Old Town and Downtown.
- */
-function districtFor(x, y) {
-  if (y > 3328) return x > 2688 ? 'Portside' : 'Marina';
-  if (y < 1024) return x > 2688 ? 'Vista Heights' : x > 1408 ? 'Northside' : 'Old Town';
-  if (x < 1024) return 'Calle Ocho';
-  if (x > 2688) return 'Industrial';
-  if (x < 1408) return 'Old Town';
-  return 'Downtown';
+/** A district containing a point, last match wins so the smaller overlays (Vista Heights,
+// Portside) are reachable instead of being shadowed by the big ones that contain them. */
+function districtAt(districts, x, y) {
+  for (let i = districts.length - 1; i >= 0; i--) {
+    const d = districts[i];
+    if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d;
+  }
+  return null;
 }
 
-/** The roof palette of the district a point falls in. */
-export function districtRoofs(x, y) {
-  return DISTRICT_ROOFS[districtFor(x, y)] ?? DISTRICT_ROOFS.Downtown;
+/** The eleven fixed landmarks, all on road crossings so every one is reachable. */
+function buildLandmarks() {
+  return {
+    garage: { x: 512, y: 512, label: "Maya's Garage" },
+    bank: { x: 2560, y: 1024, label: 'Solara Bank' },
+    hospital: { x: 2048, y: 1536, label: 'Solara General' },
+    policeHq: { x: 2560, y: 512, label: 'Police HQ' },
+    diner: { x: 512, y: 2560, label: 'Diner' },
+    port: { x: 2560, y: 3584, label: 'Port Gate' },
+    market: { x: 512, y: 2048, label: 'Market' },
+    university: { x: 1536, y: 512, label: 'University' },
+    observatory: { x: 3584, y: 512, label: 'Observatory' },
+    raceGate: { x: 1024, y: 3584, label: 'Race Gate' },
+    safehouse: { x: 3072, y: 2560, label: 'Safehouse' },
+  };
 }
 
-function gridLines() {
+/** The city for a seed: roads, districts, buildings, parks and landmarks. */
+export function buildCity(seed) {
+  const random = createRandom(seed);
+  const size = WORLD.size;
   const lines = [];
-  for (let at = 0; at <= WORLD.size; at += WORLD.roadPitch) lines.push(at);
-  return lines;
-}
-
-function layOutBlocks(random) {
+  for (let p = 0; p <= size; p += WORLD.roadPitch) lines.push(p);
+  const districts = DISTRICTS.map((d) => ({ ...d }));
   const buildings = [];
   const parks = [];
-  const pitch = WORLD.roadPitch;
-  const edge = WORLD.roadWidth / 2 + 14;
-  for (let col = 0; col < 8; col += 1) {
-    for (let row = 0; row < 8; row += 1) {
-      const x0 = col * pitch + edge;
-      const y0 = row * pitch + edge;
-      const x1 = (col + 1) * pitch - edge;
-      const y1 = (row + 1) * pitch - edge;
-      if (y0 >= WATER_Y - 40) continue;
-      const draw = random();
-      if (draw < 0.1) {
-        // The park is clipped at the shore, so its trees are planted inside
-        // the clipped rectangle — never in the bay below it.
-        const parkH = Math.min(y1, WATER_Y - 40) - y0;
+  const half = WORLD.roadWidth / 2;
+  for (let ix = 0; ix < lines.length - 1; ix++) {
+    for (let iy = 0; iy < lines.length - 1; iy++) {
+      const x0 = lines[ix] + half + 24;
+      const x1 = lines[ix + 1] - half - 24;
+      const y0 = lines[iy] + half + 24;
+      const y1 = lines[iy + 1] - half - 24;
+      if (y0 >= WATER_Y) continue; // the bay strip holds no buildings
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      const district = districtAt(districts, cx, cy);
+      const roofs = district ? DISTRICT_ROOFS[district.name] : DISTRICT_ROOFS['Old Town'];
+      if (random() < 0.1) {
         const trees = [];
-        for (let t = 0; t < TREES_PER_PARK; t += 1) {
-          trees.push({ x: x0 + 30 + random() * (x1 - x0 - 60), y: y0 + 30 + random() * (parkH - 60), r: 12 + random() * 10 });
+        const count = 6 + Math.floor(random() * 6);
+        for (let t = 0; t < count; t++) {
+          trees.push({
+            x: x0 + 20 + random() * (x1 - x0 - 40),
+            y: y0 + 20 + random() * (y1 - y0 - 40),
+            r: 8 + random() * 10,
+          });
         }
-        parks.push({ x: x0, y: y0, w: x1 - x0, h: parkH, trees });
+        parks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, trees });
         continue;
       }
-      if (draw < 0.18) continue; // an empty lot: a car park with room to turn in
-      const district = districtFor(x0 + 100, y0 + 100);
-      const count = district === 'Downtown' || district === 'Vista Heights' ? pickInt(random, 1, 2) : pickInt(random, 1, 3);
-      for (let n = 0; n < count; n += 1) {
-        const w = 70 + random() * 130;
-        const h = 70 + random() * 130;
-        const x = x0 + random() * Math.max(1, x1 - x0 - w);
-        const y = y0 + random() * Math.max(1, y1 - y0 - h);
-        if (y + h > WATER_Y - 40) continue;
-        const tall = (district === 'Downtown' || district === 'Vista Heights') && random() < 0.45;
+      // One building per block, sometimes two side by side in the wider blocks.
+      const twin = random() < 0.35 && x1 - x0 > 300;
+      const spots = twin ? 2 : 1;
+      for (let s = 0; s < spots; s++) {
+        const w = 90 + random() * 130;
+        const h = 90 + random() * 130;
+        const bx = twin ? x0 + s * ((x1 - x0) / 2) + 8 : x0 + random() * Math.max(1, x1 - x0 - w);
+        const by = y0 + random() * Math.max(1, y1 - y0 - h);
         buildings.push({
-          x, y, w, h,
-          roof: pickOne(random, districtRoofs(x, y)),
-          tall,
-          district,
+          x: Math.min(bx, x1 - w - 4),
+          y: Math.min(by, y1 - h - 4),
+          w: Math.min(w, x1 - x0 - 8),
+          h: Math.min(h, y1 - y0 - 8),
+          roof: roofs[Math.floor(random() * roofs.length)],
+          tall: district !== null && district.name === 'Downtown' && random() < 0.3,
         });
       }
     }
   }
-  return { buildings, parks };
+  return { size, lines, districts, buildings, parks, landmarks: buildLandmarks() };
 }
 
-export function buildCity(random) {
-  const { buildings, parks } = layOutBlocks(random);
-  return {
-    size: WORLD.size,
-    lines: gridLines(),
-    buildings,
-    parks,
-    landmarks: SPOTS,
-  };
-}
+// ------------------------------------------------------------------ queries
 
-/** The district name at a point, for the HUD's location line. */
+/** The district name at a point, or the city name when outside every district. */
 export function districtName(city, x, y) {
-  if (y > WATER_Y) return 'The Bay';
-  return districtFor(x, y);
+  const d = districtAt(city.districts, x, y);
+  return d ? d.name : 'Solara Bay';
 }
 
-/** Where a landmark sits, by its key (garage, bank, hospital, policeHq, safehouse, vipers, diner, port, raceGate, market, university, observatory). */
-export function landmark(city, key) {
-  return city.landmarks[key];
+/** A random spot on a road: an interior road line, a direction and a lane offset. */
+export function randomRoadSpot(city, random) {
+  const axis = random() < 0.5 ? 'v' : 'h';
+  const inner = city.lines.filter((line) => line > 0 && line < city.size && line < WATER_Y);
+  const line = inner[Math.floor(random() * inner.length)];
+  const dir = random() < 0.5 ? 1 : -1;
+  const along = 256 + random() * (city.size - 512);
+  const lane = dir > 0 ? 12 : -12;
+  return axis === 'v'
+    ? { x: line + lane, y: along, axis, line, dir, lane }
+    : { x: along, y: line + lane, axis, line, dir, lane };
 }
 
-/** Twelve hidden-package spots, one per district corner, for the collectible hunt. */
-export function collectibleSpots() {
-  return [
-    { x: 512, y: 512 }, { x: 1536, y: 512 }, { x: 2560, y: 512 }, { x: 3584, y: 1024 },
-    { x: 512, y: 1536 }, { x: 3584, y: 1536 }, { x: 1024, y: 2560 }, { x: 3072, y: 2048 },
-    { x: 512, y: 3072 }, { x: 2048, y: 3072 }, { x: 3072, y: 3072 }, { x: 1536, y: 3584 },
-  ];
-}
-
-/** True when the point is on a road's asphalt (not on the sidewalk or in a block). */
-export function onAsphalt(city, x, y) {
-  const half = WORLD.roadWidth / 2 - WORLD.sidewalk;
-  for (const line of city.lines) {
-    if (Math.abs(x - line) <= half || Math.abs(y - line) <= half) return true;
-  }
-  return false;
-}
-
-/**
- * Which road a point is nearest to, and how far along it: { axis, line, along, offset }.
- * axis 'v' means the road runs north-south (the line is an x), 'h' east-west.
- */
+/** The road line nearest a point, with the coordinate along that road. */
 export function nearestRoad(city, x, y) {
-  let best = null;
+  let bestV = null;
+  let bestH = null;
   for (const line of city.lines) {
-    const dV = Math.abs(x - line);
-    const dH = Math.abs(y - line);
-    if (best === null || dV < best.distance) best = { axis: 'v', line, along: y, offset: x - line, distance: dV };
-    if (dH < best.distance) best = { axis: 'h', line, along: x, offset: y - line, distance: dH };
+    const dv = Math.abs(x - line);
+    if (bestV === null || dv < bestV.d) bestV = { axis: 'v', line, d: dv };
+    const dh = Math.abs(y - line);
+    if (bestH === null || dh < bestH.d) bestH = { axis: 'h', line, d: dh };
   }
-  return best;
+  return bestV.d <= bestH.d
+    ? { axis: 'v', line: bestV.line, along: y }
+    : { axis: 'h', line: bestH.line, along: x };
 }
 
-/** True when a circle of radius r at (x, y) touches a building. */
+/** Push a circle out of every building it overlaps, along the smallest penetration. */
+export function pushOutOfBuildings(city, body, r) {
+  let pushed = false;
+  for (const b of city.buildings) {
+    const nx = Math.max(b.x, Math.min(body.x, b.x + b.w));
+    const ny = Math.max(b.y, Math.min(body.y, b.y + b.h));
+    const dx = body.x - nx;
+    const dy = body.y - ny;
+    if (dx * dx + dy * dy >= r * r) continue;
+    const left = body.x - (b.x - r);
+    const right = b.x + b.w + r - body.x;
+    const top = body.y - (b.y - r);
+    const bottom = b.y + b.h + r - body.y;
+    const m = Math.min(left, right, top, bottom);
+    if (m === left) body.x = b.x - r;
+    else if (m === right) body.x = b.x + b.w + r;
+    else if (m === top) body.y = b.y - r;
+    else body.y = b.y + b.h + r;
+    pushed = true;
+  }
+  return pushed;
+}
+
+/** Whether a circle at a point touches any building. */
 export function hitsBuilding(city, x, y, r) {
   for (const b of city.buildings) {
     if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return true;
@@ -166,43 +175,16 @@ export function hitsBuilding(city, x, y, r) {
   return false;
 }
 
-/**
- * Push a circle out of any building it overlaps, one axis at a time, and return whether it
- * was pushed. The caller moves, then calls this, so a wall stops the walk instead of swallowing it.
- */
-export function pushOutOfBuildings(city, body, r) {
-  let pushed = false;
-  for (const b of city.buildings) {
-    if (body.x + r <= b.x || body.x - r >= b.x + b.w || body.y + r <= b.y || body.y - r >= b.y + b.h) continue;
-    const pushLeft = body.x + r - b.x;
-    const pushRight = b.x + b.w - (body.x - r);
-    const pushUp = body.y + r - b.y;
-    const pushDown = b.y + b.h - (body.y - r);
-    const smallest = Math.min(pushLeft, pushRight, pushUp, pushDown);
-    if (smallest === pushLeft) body.x = b.x - r;
-    else if (smallest === pushRight) body.x = b.x + b.w + r;
-    else if (smallest === pushUp) body.y = b.y - r;
-    else body.y = b.y + b.h + r;
-    pushed = true;
-  }
-  return pushed;
+/** A landmark by key, or null when the city has no such landmark. */
+export function landmark(city, key) {
+  return city.landmarks[key] ?? null;
 }
 
-/** Keep a circle inside the city and out of the bay. */
-export function clampToCity(city, body, r) {
-  body.x = Math.max(r, Math.min(city.size - r, body.x));
-  body.y = Math.max(r, Math.min(WATER_Y - r, body.y));
-}
-
-/** A random spot on an interior road, for spawning traffic: { x, y, axis, dir, line, lane }. */
-export function randomRoadSpot(city, random) {
-  const inner = city.lines.slice(1, -1);
-  const axis = random() < 0.5 ? 'v' : 'h';
-  const line = pickOne(random, inner);
-  const along = 256 + random() * (city.size - 512);
-  const lane = (random() < 0.5 ? -1 : 1) * 12;
-  const dir = random() < 0.5 ? -1 : 1;
-  return axis === 'v'
-    ? { x: line + lane, y: along, axis, dir, line, lane }
-    : { x: along, y: line + lane, axis, dir, line, lane };
+/** The twelve hidden-package spots: road crossings spread over the whole map. */
+export function collectibleSpots() {
+  const xs = [512, 1536, 2560, 3584];
+  const ys = [512, 1536, 3584];
+  const out = [];
+  for (const y of ys) for (const x of xs) out.push({ x, y });
+  return out;
 }
