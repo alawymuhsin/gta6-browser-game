@@ -21,3 +21,27 @@ export function pickInt(random, min, max) {
 export function pickOne(random, list) {
   return list[Math.floor(random() * list.length)];
 }
+
+/** A shuffled copy of an array, dealt from the same generator. */
+export function shuffle(random, list) {
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+/** One entry of [{ value, weight }], heavier entries drawn more often. */
+export function pickWeighted(random, entries) {
+  let total = 0;
+  for (const entry of entries) total += entry.weight;
+  let roll = random() * total;
+  for (const entry of entries) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.value;
+  }
+  return entries[entries.length - 1].value;
+}

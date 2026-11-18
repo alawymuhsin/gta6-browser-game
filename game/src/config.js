@@ -37,9 +37,9 @@ export const CAR = {
   stealTime: 0.6,
 };
 
-export const TRAFFIC = { count: 26, cruiseMin: 130, cruiseMax: 190, spawnGap: 90 };
+export const TRAFFIC = { count: 34, cruiseMin: 130, cruiseMax: 190, spawnGap: 90 };
 
-export const PED = { count: 42, walkMin: 45, walkMax: 75, fleeSpeed: 190 };
+export const PED = { count: 56, walkMin: 45, walkMax: 75, fleeSpeed: 190, gangCount: 8 };
 
 export const WANTED = {
   max: 5,
@@ -54,6 +54,35 @@ export const WANTED = {
 };
 
 export const POLICE = { carSpeed: 330, carAccel: 460, maxCars: 6, ramDamage: 9 };
+
+/** The police helicopter: it only flies once the heat is serious, and it never lands. */
+export const HELI = { minWanted: 4, speed: 300, hover: 260, rotorRate: 22, spotlight: 190 };
+
+/** A roadblock: two parked cop cars and a barrier across the road ahead of the player. */
+export const ROADBLOCK = { minWanted: 3, cooldown: 25, ahead: 520 };
+
+/**
+ * One full day in the city, in seconds of play. The day starts at 06:00: dawn 05:00–07:00,
+ * daylight 07:00–19:30, dusk 19:30–22:00, night 22:00–05:00, when the headlights and the
+ * helicopter's searchlight come on.
+ */
+export const DAY = { length: 300, dawnHour: 5, dayHour: 7, duskHour: 19.5, nightHour: 22 };
+
+/** The car radio: three synth stations, switched with R while driving. */
+export const RADIO = {
+  stations: [
+    { name: 'Solara FM', bpm: 112, wave: 'sawtooth' },
+    { name: 'Bay Beats', bpm: 88, wave: 'square' },
+    { name: 'Coast Talk', bpm: 72, wave: 'triangle' },
+  ],
+};
+
+/** Street races and hidden packages: the repeatable work after the story. */
+export const RACE = { checkpoints: 4, timePerLeg: 26, reward: 500 };
+export const COLLECTIBLES = { count: 12, reward: 1000 };
+
+/** The shotgun: five pellets in one blast, four shells of ammo a shot. */
+export const SHOTGUN = { pellets: 5, spread: 0.34, damage: 14, ammoCost: 4, shells: 12 };
 
 export const SAVE_KEY = 'solara-bay.save.v1';
 export const BEST_KEY = 'solara-bay.best.v1';
@@ -88,6 +117,24 @@ export const PALETTE = {
   red: '#e5534b',
   green: '#58c472',
   sky: '#8ec9ee',
+  heli: '#23282f',
+  heliLight: '#ffe9a8',
+  dusk: 'rgba(232,120,60,0.26)',
+  night: 'rgba(10,16,40,0.42)',
+  race: '#ff7a3c',
+  collectible: '#ff5fa2',
+};
+
+/** One roof palette per district, so each part of town reads differently from above. */
+export const DISTRICT_ROOFS = {
+  'Old Town': ['#b08968', '#a8695e', '#8d6b52'],
+  Downtown: ['#7d8a99', '#5d6b7a', '#8d7b8f'],
+  Industrial: ['#6b6f66', '#7a6a55', '#565b52'],
+  Marina: ['#d9c48a', '#b08968', '#e8dcc0'],
+  'Calle Ocho': ['#e07a5f', '#e0a13c', '#c94f4f'],
+  Northside: ['#4f7ec9', '#7d8a99', '#3f9e6b'],
+  Portside: ['#5d7a8a', '#6b6f66', '#8a6f4d'],
+  'Vista Heights': ['#d8d8d8', '#b8c4cc', '#a8695e'],
 };
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';

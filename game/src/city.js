@@ -1,15 +1,18 @@
 // The city of Solara Bay: a road grid, the blocks between the roads, the buildings and parks
 // in them, the bay along the south edge, and the landmarks the story points at. Everything is
-// dealt from the seed, so the same seed always builds the same city.
+// dealt from the seed, so the same seed always builds the same city. Eight districts now,
+// each with its own roof palette, so the town reads differently from the air.
 
-import { WORLD, PALETTE } from './config.js';
+import { DISTRICT_ROOFS, WORLD } from './config.js';
 import { pickInt, pickOne } from './random.js';
 
-const ROOFS = [PALETTE.buildingRoof, PALETTE.buildingRoof2, PALETTE.buildingRoof3, PALETTE.buildingRoof4];
 const PARK_TREES = 7;
 
 /** The bay: everything south of this y is water, and nothing is built there. */
 export const WATER_Y = 3840;
+
+/** The eight districts, in the order the HUD's location line names them. */
+export const DISTRICTS = ['Old Town', 'Downtown', 'Industrial', 'Marina', 'Calle Ocho', 'Northside', 'Portside', 'Vista Heights'];
 
 /** Landmarks, each on a road corner so the player can always reach them. */
 const LANDMARK_SPOTS = {
@@ -21,13 +24,29 @@ const LANDMARK_SPOTS = {
   vipers: { x: 3584, y: 2560, label: 'Viper Turf' },
   diner: { x: 1536, y: 3072, label: 'Blue Diner' },
   port: { x: 2560, y: 3584, label: 'Port Gate' },
+  raceGate: { x: 1024, y: 3584, label: 'Race Gate' },
+  market: { x: 512, y: 2048, label: 'Calle Ocho Market' },
+  university: { x: 2048, y: 512, label: 'Northside University' },
+  observatory: { x: 3584, y: 512, label: 'Vista Observatory' },
 };
 
+/**
+ * The district at a point. The south shore is the Marina, the east yards are Industrial
+ * and Portside, the north-east rise is Vista Heights, the north centre is Northside, the
+ * west strip is Calle Ocho, and the rest splits into Old Town and Downtown.
+ */
 function districtAt(x, y) {
-  if (y > 3328) return 'Marina';
-  if (x < 1408) return 'Old Town';
+  if (y > 3328) return x > 2688 ? 'Portside' : 'Marina';
+  if (y < 1024) return x > 2688 ? 'Vista Heights' : x > 1408 ? 'Northside' : 'Old Town';
+  if (x < 1024) return 'Calle Ocho';
   if (x > 2688) return 'Industrial';
+  if (x < 1408) return 'Old Town';
   return 'Downtown';
+}
+
+/** The roof palette of the district at a point. */
+export function districtRoofs(x, y) {
+  return DISTRICT_ROOFS[districtAt(x, y)] ?? DISTRICT_ROOFS.Downtown;
 }
 
 function roadLines() {
@@ -61,19 +80,20 @@ function buildBlocks(random) {
         continue;
       }
       if (roll < 0.18) continue; // an empty lot: a car park with room to turn in
-      const count = districtAt(x0 + 100, y0 + 100) === 'Downtown' ? pickInt(random, 1, 2) : pickInt(random, 1, 3);
+      const district = districtAt(x0 + 100, y0 + 100);
+      const count = district === 'Downtown' || district === 'Vista Heights' ? pickInt(random, 1, 2) : pickInt(random, 1, 3);
       for (let n = 0; n < count; n += 1) {
         const w = 70 + random() * 130;
         const h = 70 + random() * 130;
         const x = x0 + random() * Math.max(1, x1 - x0 - w);
         const y = y0 + random() * Math.max(1, y1 - y0 - h);
         if (y + h > WATER_Y - 40) continue;
-        const tall = districtAt(x, y) === 'Downtown' && random() < 0.45;
+        const tall = (district === 'Downtown' || district === 'Vista Heights') && random() < 0.45;
         buildings.push({
           x, y, w, h,
-          roof: pickOne(random, ROOFS),
+          roof: pickOne(random, districtRoofs(x, y)),
           tall,
-          district: districtAt(x, y),
+          district,
         });
       }
     }
@@ -98,9 +118,18 @@ export function districtName(city, x, y) {
   return districtAt(x, y);
 }
 
-/** Where a landmark sits, by its key (garage, bank, hospital, policeHq, safehouse, vipers, diner, port). */
+/** Where a landmark sits, by its key (garage, bank, hospital, policeHq, safehouse, vipers, diner, port, raceGate, market, university, observatory). */
 export function landmark(city, key) {
   return city.landmarks[key];
+}
+
+/** Twelve hidden-package spots, one per district corner, for the collectible hunt. */
+export function collectibleSpots() {
+  return [
+    { x: 512, y: 512 }, { x: 1536, y: 512 }, { x: 2560, y: 512 }, { x: 3584, y: 1024 },
+    { x: 512, y: 1536 }, { x: 3584, y: 1536 }, { x: 1024, y: 2560 }, { x: 3072, y: 2048 },
+    { x: 512, y: 3072 }, { x: 2048, y: 3072 }, { x: 3072, y: 3072 }, { x: 1536, y: 3584 },
+  ];
 }
 
 /** True when the point is on a road's asphalt (not on the sidewalk or in a block). */

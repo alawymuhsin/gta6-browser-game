@@ -1,8 +1,11 @@
-// The story: five jobs for Maya Solis, the fixer who runs Solara Bay from a garage in Old
+// The story: ten jobs for Maya Solis, the fixer who runs Solara Bay from a garage in Old
 // Town, and the taxi fares that keep the meter running once the story is done. A mission is a
 // list of steps; each step names what to do and where, and the world answers when it is done.
 // The current mission is always live: the marker on the map is the next step, and the HUD
-// carries its text, so the game never leaves the player guessing.
+// carries its text, so the game never leaves the player guessing. The second half of the
+// story is where the city answers back: a broadcast van to steal, a street race through
+// four checkpoints, a safehouse to take back from the Vipers, a helicopter overhead, and
+// one last heist at the harbor.
 
 export const MISSIONS = [
   {
@@ -60,6 +63,61 @@ export const MISSIONS = [
       { type: 'go', text: 'Escape to the Safehouse — the whole city is coming', landmark: 'safehouse', radius: 110, wanted: 4 },
     ],
   },
+  {
+    id: 'radio',
+    title: 'Radio Silence',
+    giver: 'Maya Solis',
+    briefing: 'The Vipers run a pirate station out of a broadcast van by the docks. Take the van — not just any car, the van — and bring it to my garage before they notice it is gone.',
+    reward: 900,
+    steps: [
+      { type: 'steal-van', text: 'Steal a van (any van on the street, press E)' },
+      { type: 'timed', text: "Drive the van to Maya's Garage", landmark: 'garage', radius: 110, seconds: 120 },
+    ],
+  },
+  {
+    id: 'prix',
+    title: 'Grand Prix',
+    giver: 'Maya Solis',
+    briefing: 'The street racers meet at the Race Gate on the coastal road. Four checkpoints, one clock, no cops invited. Win it and the whole town knows your name.',
+    reward: 1200,
+    steps: [
+      { type: 'go', text: 'Get to the Race Gate on the coastal road', landmark: 'raceGate', radius: 110 },
+      { type: 'race', text: 'Race the checkpoints — beat the clock' },
+    ],
+  },
+  {
+    id: 'safehouse',
+    title: 'The Safehouse',
+    giver: 'Maya Solis',
+    briefing: 'The old safehouse on the west side is Viper-held now, and I want it back. Clear the block — four of them, Jax — and the place is yours: a bed, a save, and a shotgun in the closet.',
+    reward: 1000,
+    steps: [
+      { type: 'go', text: 'Get to the Safehouse', landmark: 'safehouse', radius: 130 },
+      { type: 'fight', text: 'Clear the Safehouse block (4)', landmark: 'safehouse', radius: 260, enemies: 4, enforcers: 1 },
+    ],
+  },
+  {
+    id: 'air',
+    title: 'Air Support',
+    giver: 'Maya Solis',
+    briefing: 'Four stars, Jax, and this time they sent the helicopter. It watches from above and calls the ground cars in. Stay free for seventy-five seconds and it runs out of fuel.',
+    reward: 1500,
+    steps: [
+      { type: 'survive', text: 'Stay free with the helicopter overhead — 75 seconds at 4 stars', seconds: 75, wanted: 4 },
+    ],
+  },
+  {
+    id: 'harbor',
+    title: 'Harbor Heist',
+    giver: 'Maya Solis',
+    briefing: 'The last job, and the biggest. A shipment lands at the Port Gate at midnight: hold the dock, load the crates, and run the whole load to the Marina while five stars come down on you.',
+    reward: 5000,
+    steps: [
+      { type: 'go', text: 'Get to the Port Gate', landmark: 'port', radius: 100 },
+      { type: 'hold', text: 'Hold E at the dock to load the shipment', landmark: 'port', radius: 90, seconds: 6 },
+      { type: 'go', text: 'Run the load to the Marina — five stars, no stopping', landmark: 'raceGate', radius: 110, wanted: 5 },
+    ],
+  },
 ];
 
 export function createMissionState() {
@@ -74,6 +132,8 @@ export function createMissionState() {
     fareCooldown: 8,
     message: null,
     messageTime: 0,
+    raceLaps: 0,
+    raceStarted: false,
   };
 }
 
@@ -90,6 +150,7 @@ export function currentStep(state) {
 export function stepTarget(state, city) {
   const step = currentStep(state);
   if (!step) return null;
+  if (step.type === 'race') return null; // the race checkpoint is the marker, set by the world
   if (step.landmark) {
     const spot = city.landmarks[step.landmark];
     return { x: spot.x, y: spot.y, label: spot.label };
@@ -104,9 +165,10 @@ function startStep(state, city) {
   state.holdProgress = 0;
   const events = [];
   if (step.wanted !== undefined) events.push({ kind: 'set-wanted', value: step.wanted });
+  if (step.type === 'race') events.push({ kind: 'start-race' });
   if (step.enemies) {
     const target = stepTarget(state, city);
-    events.push({ kind: 'spawn-enemies', count: step.enemies, x: target.x, y: target.y });
+    events.push({ kind: 'spawn-enemies', count: step.enemies, enforcers: step.enforcers ?? 0, x: target.x, y: target.y });
   }
   return events;
 }
@@ -125,14 +187,19 @@ export function failMission(state, city, reason) {
   return beginMission(state, city);
 }
 
-/** The objective line the HUD shows right now. */
-export function objectiveText(state) {
+/** The objective line the HUD shows right now. `race` is the world's race state, for the race step's clock. */
+export function objectiveText(state, race) {
   const mission = currentMission(state);
   if (!mission) return 'Free roam — Solara Bay is yours.';
   const step = currentStep(state);
   let text = `${mission.title}: ${step.text}`;
   if (step.type === 'timed' || step.type === 'survive') text += ` — ${Math.ceil(state.timer)}s`;
   if (step.type === 'hold') text += ` — ${Math.floor((state.holdProgress / step.seconds) * 100)}%`;
+  if (step.type === 'race' && race) {
+    text += race.active
+      ? ` — checkpoint ${Math.min(race.index + 1, race.checkpoints.length)}/${race.checkpoints.length}, ${Math.ceil(Math.max(0, race.timer))}s`
+      : ' — line up at the Race Gate';
+  }
   return text;
 }
 
@@ -156,6 +223,19 @@ export function updateMissions(state, city, ctx, dt) {
   let failed = false;
   if (step.type === 'steal') {
     done = ctx.inCar;
+  } else if (step.type === 'steal-van') {
+    done = ctx.inCar && ctx.carType === 'van';
+  } else if (step.type === 'race') {
+    if (ctx.race && ctx.race.laps > state.raceLaps) {
+      done = true;
+      state.raceStarted = false;
+    } else if (ctx.race && state.raceStarted && !ctx.race.active && ctx.race.laps === state.raceLaps && ctx.race.timer <= 0) {
+      state.message = 'Out of time — the race is lost. Line up at the gate and try again.';
+      state.messageTime = 4;
+      state.raceStarted = false;
+      events.push(...beginMission(state, city));
+      return events;
+    }
   } else if (step.type === 'go') {
     done = distance < step.radius;
   } else if (step.type === 'pickup') {

@@ -1,11 +1,85 @@
 // The police: cars that spawn when the wanted level rises, chase the player through the
 // streets, ram a getaway car, and bust a player on foot who lets one pull up beside them.
 // They drive straight at the player and slide along walls instead of following roads, which
-// is what makes a chase feel like a chase.
+// is what makes a chase feel like a chase. At four stars the helicopter comes up and watches
+// from above; at three stars a roadblock goes down on the road ahead of the player.
 
-import { POLICE, WANTED } from './config.js';
+import { HELI, POLICE, ROADBLOCK, WANTED } from './config.js';
 import { createCar, carAxles, damageCar } from './vehicles.js';
-import { pushOutOfBuildings, randomRoadSpot } from './city.js';
+import { nearestRoad, pushOutOfBuildings, randomRoadSpot } from './city.js';
+
+/** Whether the helicopter flies at this wanted level. */
+export function wantedHeli(wanted) {
+  return wanted >= HELI.minWanted;
+}
+
+/** A helicopter, hovering above the player and watching with its searchlight. */
+export function createHeli(x, y) {
+  return { x, y, angle: 0, rotorPhase: 0, active: true };
+}
+
+/** The helicopter drifts toward the player and keeps its light on them. */
+export function updateHeli(heli, player, dt) {
+  if (!heli || !heli.active) return;
+  heli.rotorPhase += dt * HELI.rotorRate;
+  const dx = player.x - heli.x;
+  const dy = player.y - heli.y;
+  const d = Math.hypot(dx, dy);
+  heli.angle = Math.atan2(dy, dx);
+  if (d > HELI.hover) {
+    heli.x += Math.cos(heli.angle) * HELI.speed * dt;
+    heli.y += Math.sin(heli.angle) * HELI.speed * dt;
+  }
+}
+
+/**
+ * Roadblocks: when the heat is high and the player is driving, two parked cop cars and a
+ * barrier go down on the road ahead of them. They are ordinary cars in the world's list
+ * (kind 'police', parked), so the player can smash through them or steer around them; they
+ * leave when the heat drops. Returns 'roadblock' when one goes down.
+ */
+export function updateRoadblocks(roadblocks, cars, player, wanted, dt, city, random) {
+  let result = null;
+  for (let i = roadblocks.length - 1; i >= 0; i -= 1) {
+    const block = roadblocks[i];
+    block.time -= dt;
+    if (wanted < ROADBLOCK.minWanted || block.time <= 0) {
+      for (const car of block.cars) {
+        const index = cars.indexOf(car);
+        if (index !== -1) cars.splice(index, 1);
+      }
+      roadblocks.splice(i, 1);
+    }
+  }
+  if (wanted >= ROADBLOCK.minWanted && player.car && roadblocks.length === 0) {
+    roadblocks.cooldown = (roadblocks.cooldown ?? 0) - dt;
+    if (roadblocks.cooldown <= 0) {
+      roadblocks.cooldown = ROADBLOCK.cooldown;
+      const aheadX = player.x + Math.cos(player.angle) * ROADBLOCK.ahead;
+      const aheadY = player.y + Math.sin(player.angle) * ROADBLOCK.ahead;
+      const road = nearestRoad(city, aheadX, aheadY);
+      const cx = road.axis === 'v' ? road.line : aheadX;
+      const cy = road.axis === 'v' ? aheadY : road.line;
+      const angle = road.axis === 'v' ? Math.PI / 2 : 0;
+      const carsOnBlock = [];
+      for (const side of [-1, 1]) {
+        const ox = road.axis === 'v' ? side * 40 : 0;
+        const oy = road.axis === 'v' ? 0 : side * 40;
+        const blockCar = createCar(random, cx + ox, cy + oy, angle, 'police', 'police');
+        blockCar.siren = true;
+        blockCar.sirenPhase = random() * 2;
+        blockCar.road = null;
+        cars.push(blockCar);
+        carsOnBlock.push(blockCar);
+      }
+      roadblocks.push({ x: cx, y: cy, angle, cars: carsOnBlock, time: 40 });
+      result = 'roadblock';
+    }
+  } else if (wanted < ROADBLOCK.minWanted) {
+    roadblocks.cooldown = 0;
+  }
+  return result;
+}
 
 /** How many cop cars the street should hold at each wanted level. */
 export function wantedCarCount(wanted) {

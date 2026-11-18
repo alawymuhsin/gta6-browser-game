@@ -2,17 +2,23 @@
 // behind the wheel, the traffic, the pedestrians, the police, the missions, the wanted level,
 // money, health and the save. step() advances one fixed step and returns what happened as
 // events, so the caller can play sounds and announce without the world knowing about them.
+// The second half of the story adds the systems that answer back: a police helicopter and
+// roadblocks at high heat, street races and deliveries after the story, hidden packages
+// around the city, a safehouse that heals and saves, and a shotgun in its closet.
 
-import { BEST_KEY, PLAYER, SAVE_KEY, WANTED } from './config.js';
+import { BEST_KEY, PLAYER, SAVE_KEY, SHOTGUN, WANTED } from './config.js';
 import { createRandom } from './random.js';
 import { buildCity, clampToCity, districtName, hitsBuilding, landmark, pushOutOfBuildings } from './city.js';
 import { carAxles, createCar, damageCar, drivePlayerCar, spawnTraffic, updateTraffic } from './vehicles.js';
 import { createPedestrian, scareNearby, spawnPedestrians, updatePedestrians } from './pedestrians.js';
-import { spawnCopCar, updatePolice, wantedCarCount } from './police.js';
+import { createHeli, spawnCopCar, updateHeli, updatePolice, updateRoadblocks, wantedCarCount, wantedHeli } from './police.js';
 import {
   beginMission, createMissionState, currentMission, failMission, objectiveText, stepTarget, updateMissions,
 } from './missions.js';
-import { createEnemy, fireBullet, punch, updateBullets, updateEnemies } from './combat.js';
+import { createEnemy, fireBullet, fireShotgun, punch, updateBullets, updateEnemies } from './combat.js';
+import {
+  collectibleNear, createCollectibles, createRaceState, offerDelivery, raceTarget, startRace, updateDelivery, updateRace,
+} from './activities.js';
 
 export const EVENT_NONE = 0;
 
@@ -48,7 +54,7 @@ export function createWorld(random) {
     player: {
       x: 1024, y: 1024, angle: 0, faceAngle: 0, aimAngle: 0,
       health: PLAYER.health, money: 100, wanted: 0, lastCrime: -999,
-      ammo: PLAYER.startAmmo, hasPistol: false, car: null,
+      ammo: PLAYER.startAmmo, hasPistol: false, hasShotgun: false, weapon: 'pistol', car: null,
       punchCooldown: 0, shootCooldown: 0, invulnerable: 0, lastDamage: -999,
       lastShootCrime: -999, lastPedCrime: -999,
     },
@@ -59,9 +65,17 @@ export function createWorld(random) {
     enemies: [],
     pickups: [],
     particles: [],
+    heli: null,
+    roadblocks: [],
+    race: createRaceState(),
+    raceMarker: null,
+    delivery: null,
+    deliveryCooldown: 0,
+    collectibles: createCollectibles(),
+    safehouseOwned: false,
     camera: { x: 1024, y: 1024, zoom: 1 },
     missions: createMissionState(),
-    stats: { carsStolen: 0, missionsDone: 0, faresDone: 0, earned: 0 },
+    stats: { carsStolen: 0, missionsDone: 0, faresDone: 0, earned: 0, racesWon: 0, deliveriesDone: 0, packagesFound: 0 },
     copSpawnTimer: 0,
     saveTimer: 30,
     shake: 0,
@@ -100,6 +114,8 @@ export function createWorld(random) {
     state.player.wanted = 0;
     state.player.ammo = PLAYER.startAmmo;
     state.player.hasPistol = false;
+    state.player.hasShotgun = false;
+    state.player.weapon = 'pistol';
     state.player.car = null;
     state.cars = spawnTraffic(city, random);
     state.peds = spawnPedestrians(city, random);
@@ -108,8 +124,16 @@ export function createWorld(random) {
     state.enemies = [];
     state.pickups = spawnPickups(city, random);
     state.particles = [];
+    state.heli = null;
+    state.roadblocks = [];
+    state.race = createRaceState();
+    state.raceMarker = null;
+    state.delivery = null;
+    state.deliveryCooldown = 0;
+    state.collectibles = createCollectibles();
+    state.safehouseOwned = false;
     state.missions = createMissionState();
-    state.stats = { carsStolen: 0, missionsDone: 0, faresDone: 0, earned: 0 };
+    state.stats = { carsStolen: 0, missionsDone: 0, faresDone: 0, earned: 0, racesWon: 0, deliveriesDone: 0, packagesFound: 0 };
     state.banner = null;
     state.toasts = [];
     state.camera.x = state.player.x;
@@ -161,6 +185,9 @@ export function createWorld(random) {
         health: state.player.health,
         ammo: state.player.ammo,
         hasPistol: state.player.hasPistol,
+        hasShotgun: state.player.hasShotgun,
+        weapon: state.player.weapon,
+        safehouseOwned: state.safehouseOwned,
         missionIndex: state.missions.index,
         storyDone: state.missions.storyDone,
         x: state.player.x,
@@ -321,17 +348,26 @@ export function createWorld(random) {
         events.push({ kind: 'punch-miss' });
       }
     }
-    // Pistol: the mouse aims, a click fires.
+    // Q switches between the pistol and the shotgun, once the safehouse is yours.
+    if (input.weapon && player.hasShotgun) {
+      player.weapon = player.weapon === 'shotgun' ? 'pistol' : 'shotgun';
+      toast(player.weapon === 'shotgun' ? 'Shotgun out — five pellets, close range.' : 'Pistol out.', 2);
+      events.push({ kind: 'weapon', weapon: player.weapon });
+    }
+    // The mouse aims, a click fires: one pistol bullet, or a shotgun blast of five.
     player.shootCooldown = Math.max(0, player.shootCooldown - dt);
     if (input.shoot && player.hasPistol && player.shootCooldown <= 0) {
       player.shootCooldown = PLAYER.pistolCooldown;
-      if (player.ammo > 0) {
-        player.ammo -= 1;
+      const shotgun = player.weapon === 'shotgun' && player.hasShotgun;
+      const cost = shotgun ? SHOTGUN.ammoCost : 1;
+      if (player.ammo >= cost) {
+        player.ammo -= cost;
         const gx = player.x + Math.cos(player.aimAngle) * 20;
         const gy = player.y + Math.sin(player.aimAngle) * 20;
-        fireBullet(state.bullets, gx, gy, player.aimAngle, 'player', PLAYER.pistolDamage);
+        if (shotgun) fireShotgun(state.bullets, gx, gy, player.aimAngle, 'player');
+        else fireBullet(state.bullets, gx, gy, player.aimAngle, 'player', PLAYER.pistolDamage);
         addParticles(gx, gy, '#ffd76a', 4, 120);
-        events.push({ kind: 'shot' });
+        events.push({ kind: shotgun ? 'shotgun' : 'shot' });
         const copNear = state.cops.some((cop) => Math.hypot(cop.x - player.x, cop.y - player.y) < 600);
         if (copNear && state.time - player.lastShootCrime > 10) {
           player.lastShootCrime = state.time;
@@ -340,8 +376,17 @@ export function createWorld(random) {
         scareNearby(state.peds, player.x, player.y, 260);
       }
     }
-    // Getting in: E near a car takes it.
+    // Getting in: E near a car takes it. E at your own safehouse heals you and saves.
     if (input.interact) {
+      if (state.safehouseOwned) {
+        const house = landmark(city, 'safehouse');
+        if (Math.hypot(player.x - house.x, player.y - house.y) < 100) {
+          player.health = PLAYER.health;
+          save();
+          toast('Safehouse: healed up and saved.', 3);
+          events.push({ kind: 'safehouse' });
+        }
+      }
       const car = nearestCar(64);
       if (car) enterCar(car, events);
     }
@@ -444,6 +489,7 @@ export function createWorld(random) {
       addParticles(car.x, car.y, '#555', 16, 90);
     }
     if (input.interact) exitCar();
+    if (input.horn) events.push({ kind: 'horn' });
     if (speed > 60) {
       if (random() < 0.3) {
         state.particles.push({
@@ -482,6 +528,15 @@ export function createWorld(random) {
       for (let i = state.cops.length - 1; i >= 0; i -= 1) {
         if (Math.hypot(state.cops[i].x - player.x, state.cops[i].y - player.y) > 800) state.cops.splice(i, 1);
       }
+    }
+    // The helicopter: up at four stars, down when the heat cools.
+    if (wantedHeli(player.wanted) && !state.heli) state.heli = createHeli(player.x, player.y - 200);
+    if (!wantedHeli(player.wanted)) state.heli = null;
+    if (state.heli) updateHeli(state.heli, player, dt);
+    // Roadblocks on the road ahead, while the heat is high and the player is driving.
+    if (updateRoadblocks(state.roadblocks, state.cars, player, player.wanted, dt, city, random) === 'roadblock') {
+      events.push({ kind: 'roadblock' });
+      toast('Roadblock ahead — smash through or steer around it.', 3);
     }
     if (player.car) stepPlayerInCar(dt, input, events);
     else stepPlayerOnFoot(dt, input, events);
@@ -563,10 +618,75 @@ export function createWorld(random) {
         }
       }
     }
+    // Street races: the clock runs, the checkpoints pay, the marker follows the next one.
+    state.raceMarker = raceTarget(state.race);
+    const raceEvents = updateRace(state.race, { x: player.x, y: player.y }, dt);
+    for (const re of raceEvents) {
+      if (re.kind === 'race-checkpoint') {
+        events.push({ kind: 'race-checkpoint' });
+        toast(`Checkpoint — ${re.left} to go.`, 2);
+      } else if (re.kind === 'race-won') {
+        player.money += re.amount;
+        state.stats.earned += re.amount;
+        state.stats.racesWon += 1;
+        events.push({ kind: 'race-won', amount: re.amount });
+        toast(`Race won — $${re.amount}.`, 4);
+      } else if (re.kind === 'race-lost') {
+        events.push({ kind: 'race-lost' });
+        toast('Race lost — out of time.', 3);
+      }
+    }
+    // Deliveries, once the story is done: a package to fetch and a door to reach.
+    if (state.missions.storyDone) {
+      state.deliveryCooldown -= dt;
+      if (!state.delivery && state.deliveryCooldown <= 0) {
+        state.delivery = offerDelivery(city, random);
+        state.deliveryCooldown = 25;
+      }
+      if (state.delivery) {
+        const dctx = { x: player.x, y: player.y, interact: input.interact, deliveryPaid: 0 };
+        const dev = updateDelivery(state.delivery, dctx, dt);
+        if (dev) {
+          if (dev.kind === 'delivery-picked') {
+            events.push({ kind: 'delivery-picked' });
+            toast(`Delivery to ${dev.label} — ${Math.ceil(dev.seconds)}s on the clock.`, 4);
+          } else if (dev.kind === 'delivery-done') {
+            player.money += dev.amount;
+            state.stats.earned += dev.amount;
+            state.stats.deliveriesDone += 1;
+            state.delivery = null;
+            state.deliveryCooldown = 15;
+            events.push({ kind: 'delivery-done', amount: dev.amount });
+            toast(`Delivery paid: $${dev.amount}.`, 3);
+          } else if (dev.kind === 'delivery-lost') {
+            state.delivery = null;
+            state.deliveryCooldown = 15;
+            events.push({ kind: 'delivery-lost' });
+            toast('Delivery lost — the package went cold.', 3);
+          }
+        }
+      }
+    }
+    // Hidden packages: twelve of them, stashed at the city's corners.
+    const found = collectibleNear(state.collectibles, player.x, player.y);
+    if (found) {
+      player.money += 25;
+      state.stats.earned += 25;
+      state.stats.packagesFound = found.found;
+      if (found.bonus > 0) {
+        player.money += found.bonus;
+        state.stats.earned += found.bonus;
+      }
+      events.push({ kind: 'collectible', found: found.found, total: found.total, bonus: found.bonus });
+      toast(found.bonus > 0 ? `All ${found.total} packages — bonus $${found.bonus}!` : `Hidden package ${found.found}/${found.total} — $25.`, 4);
+      save();
+    }
     // Missions.
     const ctx = {
       x: player.x, y: player.y,
       inCar: !!player.car,
+      carType: player.car ? player.car.type : null,
+      race: state.race,
       enemiesAlive: state.enemies.filter((e) => !e.down).length,
       interact: input.interact,
       holding: input.interactHeld,
@@ -587,17 +707,29 @@ export function createWorld(random) {
           player.ammo = Math.min(PLAYER.maxAmmo, player.ammo + 24);
           toast('Maya gave you a pistol. Click to shoot.', 4);
         }
+        if (me.id === 'safehouse') {
+          state.safehouseOwned = true;
+          player.hasShotgun = true;
+          player.weapon = 'shotgun';
+          toast('The safehouse is yours — heal and save with E. A shotgun waits in the closet; Q switches weapons.', 5);
+        }
         save();
       } else if (me.kind === 'story-done') {
-        state.banner = { title: 'THE BIG SCORE', sub: 'Solara Bay is yours now, Jax.', time: 5 };
+        state.banner = { title: 'THE HARBOR HEIST', sub: 'Solara Bay is yours now, Jax.', time: 5 };
         events.push({ kind: 'story-done' });
         save();
       } else if (me.kind === 'set-wanted') {
         setWanted(me.value);
+      } else if (me.kind === 'start-race') {
+        startRace(state.race, city, random);
+        state.missions.raceLaps = state.race.laps;
+        state.missions.raceStarted = true;
+        state.raceMarker = raceTarget(state.race);
+        toast('Race — hit the checkpoints before the clock runs out.', 4);
       } else if (me.kind === 'spawn-enemies') {
         for (let i = 0; i < me.count; i += 1) {
           const angle = (i / me.count) * Math.PI * 2;
-          state.enemies.push(createEnemy(random, me.x + Math.cos(angle) * 90, me.y + Math.sin(angle) * 90));
+          state.enemies.push(createEnemy(random, me.x + Math.cos(angle) * 90, me.y + Math.sin(angle) * 90, i < (me.enforcers ?? 0) ? 'enforcer' : 'viper'));
         }
         events.push({ kind: 'viper-spawn' });
       } else if (me.kind === 'step-done') {

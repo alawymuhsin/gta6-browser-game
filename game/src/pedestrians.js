@@ -28,21 +28,35 @@ export function createPedestrian(random, city) {
     pants: pickOne(random, PANTS),
     fleeX: 0, fleeY: 0, fleeTime: 0,
     down: false, downTime: 0,
+    kind: 'civilian',
     roadAxis: road.axis, roadLine: road.line, roadDir: random() < 0.5 ? -1 : 1, side,
   };
 }
 
-/** Fill the sidewalks. */
+/** A Viper gang member, loitering on their own turf: purple shirt, slower, and he does not run. */
+export function createGangPed(random, city) {
+  const ped = createPedestrian(random, city);
+  ped.x = 3584 + (random() - 0.5) * 320;
+  ped.y = 2560 + (random() - 0.5) * 320;
+  ped.shirt = '#7a3fd1';
+  ped.pants = '#2f2f38';
+  ped.speed = 35 + random() * 20;
+  ped.kind = 'gang';
+  return ped;
+}
+
+/** Fill the sidewalks, and put the gang on their turf in the east yards. */
 export function spawnPedestrians(city, random) {
   const peds = [];
   for (let i = 0; i < PED.count; i += 1) peds.push(createPedestrian(random, city));
+  for (let i = 0; i < PED.gangCount; i += 1) peds.push(createGangPed(random, city));
   return peds;
 }
 
-/** Scare every pedestrian near a point: they run away from it for a few seconds. */
+/** Scare every pedestrian near a point: they run away from it for a few seconds. Gang members stand their ground. */
 export function scareNearby(peds, x, y, radius) {
   for (const ped of peds) {
-    if (ped.down) continue;
+    if (ped.down || ped.kind === 'gang') continue;
     const dx = ped.x - x;
     const dy = ped.y - y;
     const d = Math.hypot(dx, dy);

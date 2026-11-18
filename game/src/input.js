@@ -6,6 +6,8 @@
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_MUTE = 4;
+export const ACTION_RADIO = 8;
+export const ACTION_HORN = 16;
 
 const LEFT = new Set(['ArrowLeft', 'KeyA']);
 const RIGHT = new Set(['ArrowRight', 'KeyD']);
@@ -17,6 +19,9 @@ const INTERACT = new Set(['KeyE']);
 const PUNCH = new Set(['KeyF']);
 const RUN = new Set(['ShiftLeft', 'ShiftRight']);
 const MUTE = new Set(['KeyM']);
+const RADIO = new Set(['KeyR']);
+const HORN = new Set(['KeyH']);
+const WEAPON = new Set(['KeyQ']);
 
 export function createInput(canvas) {
   const keys = new Set();
@@ -24,6 +29,8 @@ export function createInput(canvas) {
   let actions = 0;
   let interactPressed = false;
   let punchPressed = false;
+  let hornPressed = false;
+  let weaponPressed = false;
 
   function isDown(set) {
     for (const code of set) if (keys.has(code)) return true;
@@ -48,6 +55,15 @@ export function createInput(canvas) {
       event.preventDefault();
     } else if (PUNCH.has(event.code)) {
       punchPressed = true;
+      event.preventDefault();
+    } else if (RADIO.has(event.code)) {
+      actions |= ACTION_RADIO;
+      event.preventDefault();
+    } else if (HORN.has(event.code)) {
+      hornPressed = true;
+      event.preventDefault();
+    } else if (WEAPON.has(event.code)) {
+      weaponPressed = true;
       event.preventDefault();
     } else if (RUN.has(event.code) || MUTE.has(event.code)) {
       keys.add(event.code);
@@ -99,12 +115,16 @@ export function createInput(canvas) {
         interact: interactPressed,
         interactHeld: isDown(INTERACT),
         punch: punchPressed,
+        horn: hornPressed,
+        weapon: weaponPressed,
         shoot: mouse.down,
         aimX: aim.x,
         aimY: aim.y,
       };
       interactPressed = false;
       punchPressed = false;
+      hornPressed = false;
+      weaponPressed = false;
       return snap;
     },
     /** The one-shot presses since the last call, as ACTION_* flags. */

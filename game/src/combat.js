@@ -2,22 +2,36 @@
 // front of the player; a bullet flies straight until it meets a wall, a car, a pedestrian or a
 // body. Enemies chase the player on foot, punch up close and shoot from a distance.
 
-import { PLAYER } from './config.js';
+import { PLAYER, SHOTGUN } from './config.js';
 import { hitsBuilding } from './city.js';
 import { carAxles, damageCar } from './vehicles.js';
 
-export function createEnemy(random, x, y) {
+/**
+ * A Viper, or an enforcer: the Vipers' heavy muscle, slower, twice as tough, hitting
+ * harder up close and from a distance. `kind` is 'viper' unless the caller says otherwise.
+ */
+export function createEnemy(random, x, y, kind = 'viper') {
+  const enforcer = kind === 'enforcer';
   return {
     x, y,
     angle: random() * Math.PI * 2,
-    health: 100,
-    speed: 165,
-    kind: 'viper',
+    health: enforcer ? 160 : 100,
+    maxHealth: enforcer ? 160 : 100,
+    speed: enforcer ? 140 : 165,
+    kind,
     punchCooldown: 0,
     shootCooldown: 1 + random(),
     down: false,
     flash: 0,
   };
+}
+
+/** A shotgun blast: five pellets in a spread, each one a bullet of its own. */
+export function fireShotgun(bullets, x, y, angle, from) {
+  for (let i = 0; i < SHOTGUN.pellets; i += 1) {
+    const spread = (i - (SHOTGUN.pellets - 1) / 2) * (SHOTGUN.spread / (SHOTGUN.pellets - 1));
+    fireBullet(bullets, x, y, angle + spread, from, SHOTGUN.damage);
+  }
 }
 
 /** A bullet from a point, along an angle, belonging to 'player' or 'enemy'. */
@@ -163,12 +177,12 @@ export function updateEnemies(enemies, player, city, bullets, dt, random, onPlay
       }
     } else if (enemy.punchCooldown <= 0) {
       enemy.punchCooldown = 1.1;
-      if (onPlayerHit) onPlayerHit(7);
+      if (onPlayerHit) onPlayerHit(enemy.kind === 'enforcer' ? 12 : 7);
     }
     if (d > 120 && d < 380 && enemy.shootCooldown <= 0) {
-      enemy.shootCooldown = 2.0 + random() * 1.0;
+      enemy.shootCooldown = (enemy.kind === 'enforcer' ? 2.6 : 2.0) + random() * 1.0;
       const aim = enemy.angle + (random() - 0.5) * 0.22;
-      fireBullet(bullets, enemy.x, enemy.y, aim, 'enemy', 7);
+      fireBullet(bullets, enemy.x, enemy.y, aim, 'enemy', enemy.kind === 'enforcer' ? 9 : 7);
     }
     enemy.x = Math.max(16, Math.min(city.size - 16, enemy.x));
     enemy.y = Math.max(16, Math.min(city.size - 16, enemy.y));

@@ -3,7 +3,7 @@
 // the minimap and the menus are drawn in screen space after the world. Nothing here changes
 // the game: it only paints what is there.
 
-import { PALETTE, FONT, VIEW, WORLD, WANTED } from './config.js';
+import { DAY, PALETTE, FONT, VIEW, WORLD, WANTED } from './config.js';
 import { WATER_Y, districtName } from './city.js';
 import { objectiveText, stepTarget } from './missions.js';
 
@@ -265,11 +265,12 @@ export function createRenderer(canvas) {
     context.moveTo(enemy.x, enemy.y - 2);
     context.lineTo(enemy.x + Math.cos(enemy.angle) * 20, enemy.y - 2 + Math.sin(enemy.angle) * 20);
     context.stroke();
-    if (enemy.health < 100) {
+    const maxHealth = enemy.maxHealth ?? 100;
+    if (enemy.health < maxHealth) {
       context.fillStyle = 'rgba(0,0,0,0.5)';
       context.fillRect(enemy.x - 16, enemy.y - 26, 32, 5);
       context.fillStyle = PALETTE.red;
-      context.fillRect(enemy.x - 16, enemy.y - 26, 32 * Math.max(0, enemy.health / 100), 5);
+      context.fillRect(enemy.x - 16, enemy.y - 26, 32 * Math.max(0, enemy.health / maxHealth), 5);
     }
   }
 
@@ -292,31 +293,34 @@ export function createRenderer(canvas) {
     context.arc(player.x + Math.cos(player.faceAngle) * 3, player.y - 12, 6, 0, Math.PI * 2);
     context.fill();
     if (player.hasPistol) {
+      const shotgun = player.weapon === 'shotgun';
       context.strokeStyle = '#222';
-      context.lineWidth = 3;
+      context.lineWidth = shotgun ? 6 : 3;
       context.beginPath();
       context.moveTo(player.x, player.y - 3);
-      context.lineTo(player.x + Math.cos(player.aimAngle) * 22, player.y - 3 + Math.sin(player.aimAngle) * 22);
+      context.lineTo(player.x + Math.cos(player.aimAngle) * (shotgun ? 18 : 22), player.y - 3 + Math.sin(player.aimAngle) * (shotgun ? 18 : 22));
       context.stroke();
     }
   }
 
   function drawMarker(state) {
-    const target = stepTarget(state.missions, state.city);
+    const target = state.raceMarker ?? stepTarget(state.missions, state.city);
     const fare = state.missions.fare;
+    const delivery = state.delivery;
     const now = state.time;
     if (target) {
+      const racing = !!state.raceMarker;
       const pulse = 1 + Math.sin(now * 5) * 0.12;
       context.save();
       context.translate(target.x, target.y);
       context.scale(pulse, pulse);
       context.rotate(Math.PI / 4);
-      context.fillStyle = PALETTE.gold;
+      context.fillStyle = racing ? PALETTE.race : PALETTE.gold;
       context.fillRect(-11, -11, 22, 22);
       context.fillStyle = '#10141c';
       context.fillRect(-6, -6, 12, 12);
       context.restore();
-      context.strokeStyle = 'rgba(242,201,76,0.7)';
+      context.strokeStyle = racing ? 'rgba(255,122,60,0.7)' : 'rgba(242,201,76,0.7)';
       context.lineWidth = 3;
       context.beginPath();
       context.moveTo(target.x, target.y - 30);
@@ -340,13 +344,138 @@ export function createRenderer(canvas) {
       context.fillRect(-11, -11, 22, 22);
       context.restore();
     }
+    if (delivery && !delivery.pickedUp) {
+      context.fillStyle = PALETTE.green;
+      context.beginPath();
+      context.arc(delivery.from.x, delivery.from.y, 12, 0, Math.PI * 2);
+      context.fill();
+      text('P', delivery.from.x, delivery.from.y + 5, 14, '#10141c', 'center', '700');
+    }
+    if (delivery && delivery.pickedUp) {
+      const pulse = 1 + Math.sin(now * 5) * 0.12;
+      context.save();
+      context.translate(delivery.to.x, delivery.to.y);
+      context.scale(pulse, pulse);
+      context.rotate(Math.PI / 4);
+      context.fillStyle = PALETTE.green;
+      context.fillRect(-10, -10, 20, 20);
+      context.restore();
+    }
+    if (state.safehouseOwned) {
+      const house = state.city.landmarks.safehouse;
+      context.fillStyle = PALETTE.green;
+      context.beginPath();
+      context.arc(house.x, house.y - 40, 13, 0, Math.PI * 2);
+      context.fill();
+      text('H', house.x, house.y - 35, 15, '#10141c', 'center', '700');
+    }
+  }
+
+  /** The helicopter: its body and rotor above the street, its shadow on the ground. */
+  function drawHeliBody(state, vis) {
+    const heli = state.heli;
+    if (!heli) return;
+    if (heli.x < vis.x0 || heli.x > vis.x1 || heli.y < vis.y0 || heli.y > vis.y1) return;
+    context.fillStyle = 'rgba(0,0,0,0.3)';
+    context.beginPath();
+    context.ellipse(heli.x + 16, heli.y + 22, 26, 12, 0, 0, Math.PI * 2);
+    context.fill();
+    context.save();
+    context.translate(heli.x, heli.y);
+    context.rotate(heli.angle);
+    context.fillStyle = PALETTE.heli;
+    roundRect(-22, -10, 44, 20, 9);
+    context.fill();
+    context.fillStyle = 'rgba(200,225,245,0.8)';
+    roundRect(8, -7, 12, 14, 4);
+    context.fill();
+    context.strokeStyle = 'rgba(242,244,247,0.7)';
+    context.lineWidth = 3;
+    const rotor = Math.sin(heli.rotorPhase) * 26;
+    context.beginPath();
+    context.moveTo(-rotor, 0);
+    context.lineTo(rotor, 0);
+    context.stroke();
+    context.restore();
+  }
+
+  /** The striped barrier between a roadblock's two parked cop cars. */
+  function drawRoadblockBarriers(state, vis) {
+    for (const block of state.roadblocks) {
+      if (block.x < vis.x0 || block.x > vis.x1 || block.y < vis.y0 || block.y > vis.y1) continue;
+      context.save();
+      context.translate(block.x, block.y);
+      context.rotate(block.angle);
+      for (let i = -2; i <= 2; i += 1) {
+        context.fillStyle = i % 2 === 0 ? '#f2f4f7' : '#e5534b';
+        context.fillRect(i * 16 - 8, -6, 16, 12);
+      }
+      context.restore();
+    }
+  }
+
+  /**
+   * The day's light: a warm wash at dusk, darkness at night, and the cones of the
+   * headlights — the player's car and the cops' — cutting through it. The helicopter's
+   * searchlight is a cone from the sky to the player.
+   */
+  function drawDayNight(state, vis) {
+    const hour = (6 + ((state.time / DAY.length) % 1) * 24) % 24;
+    const dawn = hour >= DAY.dawnHour && hour < DAY.dayHour;
+    const dusk = hour >= DAY.duskHour && hour < DAY.nightHour;
+    const night = hour >= DAY.nightHour || hour < DAY.dawnHour;
+    if (dusk || dawn) {
+      context.fillStyle = PALETTE.dusk;
+      context.fillRect(vis.x0, vis.y0, vis.x1 - vis.x0, vis.y1 - vis.y0);
+    } else if (night) {
+      context.fillStyle = PALETTE.night;
+      context.fillRect(vis.x0, vis.y0, vis.x1 - vis.x0, vis.y1 - vis.y0);
+      const cone = (x, y, angle) => {
+        context.save();
+        context.translate(x, y);
+        context.rotate(angle);
+        const gradient = context.createLinearGradient(0, 0, 260, 0);
+        gradient.addColorStop(0, 'rgba(255,233,168,0.30)');
+        gradient.addColorStop(1, 'rgba(255,233,168,0)');
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.moveTo(0, -8);
+        context.lineTo(260, -70);
+        context.lineTo(260, 70);
+        context.lineTo(0, 8);
+        context.closePath();
+        context.fill();
+        context.restore();
+      };
+      const player = state.player;
+      if (player.car) cone(player.car.x, player.car.y, player.car.angle);
+      for (const cop of state.cops) {
+        if (cop.x < vis.x0 || cop.x > vis.x1 || cop.y < vis.y0 || cop.y > vis.y1) continue;
+        cone(cop.x, cop.y, cop.angle);
+      }
+      if (state.heli) {
+        context.save();
+        const gradient = context.createLinearGradient(state.heli.x, state.heli.y, player.x, player.y);
+        gradient.addColorStop(0, 'rgba(255,233,168,0.35)');
+        gradient.addColorStop(1, 'rgba(255,233,168,0.06)');
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.moveTo(state.heli.x - 10, state.heli.y);
+        context.lineTo(player.x - 26, player.y - 26);
+        context.lineTo(player.x + 26, player.y + 26);
+        context.lineTo(state.heli.x + 10, state.heli.y);
+        context.closePath();
+        context.fill();
+        context.restore();
+      }
+    }
   }
 
   function drawHud(state, extras) {
     const player = state.player;
     const pad = 16;
     // Top-left: money, health, wanted, ammo.
-    const panelH = player.hasPistol ? 122 : 96;
+    const panelH = player.hasPistol ? (player.hasShotgun ? 142 : 122) : 96;
     context.fillStyle = 'rgba(16,20,28,0.82)';
     roundRect(pad, pad, 250, panelH, 10);
     context.fill();
@@ -361,14 +490,24 @@ export function createRenderer(canvas) {
     for (let s = 0; s < WANTED.max; s += 1) stars += s < player.wanted ? '★' : '☆';
     text(stars, pad + 16, pad + 88, 24, PALETTE.gold, 'left');
     if (player.hasPistol) text(`Ammo ${player.ammo}`, pad + 16, pad + 112, 15, PALETTE.hudText, 'left');
+    if (player.hasShotgun) text(player.weapon === 'shotgun' ? 'Shotgun · Q for pistol' : 'Pistol · Q for shotgun', pad + 16, pad + 134, 15, PALETTE.hudText, 'left');
     // Top-centre: the mission objective.
-    const objective = objectiveText(state.missions);
+    const objective = objectiveText(state.missions, state.race);
     context.font = `600 17px ${FONT}`;
     const ow = context.measureText(objective).width + 32;
     context.fillStyle = 'rgba(16,20,28,0.82)';
     roundRect((view.cssW - ow) / 2, pad, ow, 38, 10);
     context.fill();
     text(objective, view.cssW / 2, pad + 25, 17, PALETTE.hudText, 'center', '600');
+    // The radio station, while it plays.
+    if (extras.radio) {
+      context.font = `600 14px ${FONT}`;
+      const rw = context.measureText(`♪ ${extras.radio}`).width + 28;
+      context.fillStyle = 'rgba(16,20,28,0.82)';
+      roundRect((view.cssW - rw) / 2, pad + 44, rw, 28, 8);
+      context.fill();
+      text(`♪ ${extras.radio}`, view.cssW / 2, pad + 63, 14, PALETTE.gold, 'center', '600');
+    }
     // Toasts under the objective.
     state.toasts.forEach((toastItem, i) => {
       context.globalAlpha = Math.min(1, toastItem.time);
@@ -389,15 +528,18 @@ export function createRenderer(canvas) {
     }
     // Bottom-left: what the keys do right now.
     const hints = player.car
-      ? 'W/S drive · A/D steer · Space brake · E get out'
+      ? 'W/S drive · A/D steer · Space brake · E get out · R radio · H horn'
       : player.hasPistol
-        ? 'WASD move · Shift run · E enter car · F punch · Click shoot'
+        ? 'WASD move · Shift run · E enter car · F punch · Click shoot · Q weapon'
         : 'WASD move · Shift run · E enter car · F punch';
     text(hints, pad + 4, view.cssH - 18, 14, 'rgba(242,244,247,0.85)', 'left');
-    // Bottom-right: where the player is, and how fast the car goes.
+    // Bottom-right: where the player is, what time it is, and how fast the car goes.
     const district = districtName(state.city, player.x, player.y);
     const speed = player.car ? ` ${Math.round(player.car.speed * 0.36)} km/h` : '';
-    text(`${district}${speed}`, view.cssW - pad - 4, view.cssH - 18, 14, 'rgba(242,244,247,0.85)', 'right');
+    const dayFrac = (state.time / DAY.length) % 1;
+    const dayHours = (6 + dayFrac * 24) % 24;
+    const clock = `${String(Math.floor(dayHours)).padStart(2, '0')}:${String(Math.floor((dayHours % 1) * 60)).padStart(2, '0')}`;
+    text(`${district} · ${clock}${speed}`, view.cssW - pad - 4, view.cssH - 18, 14, 'rgba(242,244,247,0.85)', 'right');
     // Banner: a mission done, busted, wasted, the story's end.
     if (state.banner) {
       context.globalAlpha = Math.min(1, state.banner.time);
@@ -405,7 +547,6 @@ export function createRenderer(canvas) {
       text(state.banner.sub, view.cssW / 2, view.cssH / 2 + 12, 22, PALETTE.hudText, 'center');
       context.globalAlpha = 1;
     }
-    void extras;
   }
 
   function drawMinimap(state) {
@@ -457,6 +598,16 @@ export function createRenderer(canvas) {
     }
     const fare = state.missions.fare;
     if (fare) dot(fare.pickedUp ? fare.to.x : fare.from.x, fare.pickedUp ? fare.to.y : fare.from.y, 3.5, PALETTE.green);
+    if (state.delivery) dot(state.delivery.pickedUp ? state.delivery.to.x : state.delivery.from.x, state.delivery.pickedUp ? state.delivery.to.y : state.delivery.from.y, 3.5, PALETTE.green);
+    for (const item of state.collectibles) {
+      if (!item.taken) dot(item.x, item.y, 2, PALETTE.collectible);
+    }
+    if (state.raceMarker) {
+      const blink = Math.floor(state.time * 3) % 2 === 0;
+      if (blink) dot(state.raceMarker.x, state.raceMarker.y, 4, PALETTE.race);
+    }
+    if (state.heli) dot(state.heli.x, state.heli.y, 3.5, '#f2f4f7');
+    for (const block of state.roadblocks) dot(block.x, block.y, 3, PALETTE.red);
     // The player: a yellow arrow, pointing where they face.
     const player = state.player;
     context.save();
@@ -505,11 +656,12 @@ export function createRenderer(canvas) {
     text('SOLARA BAY', cx, 168, 84, PALETTE.gold, 'center', '800');
     text('S T R E E T   H E A T', cx, 214, 26, PALETTE.hudText, 'center', '600');
     text('An original open-world crime game. Steal cars, outrun the law,', cx, 262, 18, PALETTE.hudMuted, 'center');
-    text('run jobs for Maya Solis — and take the Big Score.', cx, 288, 18, PALETTE.hudMuted, 'center');
+    text('run jobs for Maya Solis — and pull the Harbor Heist.', cx, 288, 18, PALETTE.hudMuted, 'center');
     const lines = [
       'WASD move · Shift run · E enter / steal a car · F punch',
       'Mouse aims the pistol · Click shoots · P pause · M mute',
-      'Five story missions, taxi fares, and a wanted level that answers back.',
+      'Ten story missions, street races, a police helicopter, and a wanted level that answers back.',
+      'R radio · H horn · Q switch weapons · 12 hidden packages to find.',
     ];
     const prompt = extras.saveExists ? 'Press Space or click: Continue — or N for a new game' : 'Press Space or click to start';
     drawPanel('', lines, prompt);
@@ -524,7 +676,7 @@ export function createRenderer(canvas) {
     const lines = [
       'WASD move · Shift run · E enter / steal a car · F punch',
       'Mouse aims the pistol · Click shoots · M mute',
-      `Progress is saved automatically — ${state.missions.index} of 5 jobs done.`,
+      `Progress is saved automatically — ${state.missions.index} of 10 jobs done.`,
     ];
     drawPanel('Paused', lines, 'P to resume · S to save and quit to the title');
     void state;
@@ -573,6 +725,18 @@ export function createRenderer(canvas) {
         text('$', pickup.x, pickup.y + 5, 14, '#10141c', 'center', '700');
       }
     }
+    for (const item of state.collectibles) {
+      if (item.taken) continue;
+      if (item.x < vis.x0 || item.x > vis.x1 || item.y < vis.y0 || item.y > vis.y1) continue;
+      context.save();
+      context.translate(item.x, item.y);
+      context.rotate(Math.PI / 4);
+      context.fillStyle = PALETTE.collectible;
+      context.fillRect(-9, -9, 18, 18);
+      context.fillStyle = '#f2f4f7';
+      context.fillRect(-4, -4, 8, 8);
+      context.restore();
+    }
     for (const car of state.cars) {
       if (car.x < vis.x0 || car.x > vis.x1 || car.y < vis.y0 || car.y > vis.y1) continue;
       drawCarShape(car, car === state.player.car);
@@ -592,6 +756,8 @@ export function createRenderer(canvas) {
       drawEnemy(enemy);
     }
     drawPlayer(state);
+    drawHeliBody(state, vis);
+    drawRoadblockBarriers(state, vis);
     context.fillStyle = '#ffe9a8';
     for (const bullet of state.bullets) {
       context.fillRect(bullet.x - 3, bullet.y - 1.5, 6, 3);
@@ -604,6 +770,7 @@ export function createRenderer(canvas) {
       context.fill();
     }
     context.globalAlpha = 1;
+    drawDayNight(state, vis);
     // Back to screen space.
     context.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
     if (screen === SCREEN_TITLE) {

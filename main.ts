@@ -3,9 +3,11 @@
 // library and no network request, playable in a desktop browser from any static server. This
 // program hands it in: it copies game/ and screenshots/ from beside this file to /output and
 // writes /output/dossier.json, the summary the judge reads, with the vendored make.fun
-// library. The game itself is a top-down open world: a city to explore on foot and by car,
-// traffic and pedestrians, cars to steal and drive, a wanted level with police who respond,
-// five story missions, combat, a HUD with a minimap, a start screen and a save.
+// library. The game itself is a top-down open world: a city of eight districts to explore on
+// foot and by car, traffic and pedestrians, cars to steal and drive, a wanted level with
+// police cars, a helicopter and roadblocks who respond, ten story missions, street races,
+// deliveries, hidden packages, a safehouse, a shotgun and a car radio, combat, a HUD with a
+// minimap, a start screen and a save.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
@@ -29,13 +31,14 @@ if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), joi
 // more than 993 files in game/ or 48 MiB of game files, in all, or a path under game/ over
 // 1000 bytes: game/ counts beside /output's own 1000-entry cap, its screenshots/ and
 // dossier.json).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
+const dossierOptions = {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  game_max_files: 993,
+  game_max_bytes: 50331648,
+  game_path_max_bytes: 1000,
+};
+
+const dossier = buildDossier(out, dossierOptions);
+writeFileSync(join(out, 'dossier.json'), dossier);
+console.log(`dossier.json: ${Buffer.byteLength(dossier, 'utf8')} bytes`);

@@ -13,10 +13,11 @@ export const CAR_TYPES = {
   truck: { length: 66, width: 28, accel: 280, maxSpeed: 230, turn: 2.0, colors: ['#8a6f4d', '#5d7a8a', '#a8a8a8'] },
   van: { length: 58, width: 28, accel: 320, maxSpeed: 250, turn: 2.2, colors: ['#e8e4da', '#6b8e6b', '#7a8a99'] },
   sports: { length: 50, width: 24, accel: 560, maxSpeed: 420, turn: 3.2, colors: ['#e5534b', '#f2c94c', '#2f9e8a', '#d8d8d8'] },
+  limo: { length: 64, width: 28, accel: 340, maxSpeed: 280, turn: 2.0, colors: ['#1c1c22', '#d8d8d8', '#3a3a3a'] },
   police: { length: 52, width: 26, accel: 520, maxSpeed: 380, turn: 3.0, colors: ['#2b6fd6'] },
 };
 
-const TRAFFIC_TYPES = ['sedan', 'sedan', 'coupe', 'taxi', 'truck', 'van', 'sports'];
+const TRAFFIC_TYPES = ['sedan', 'sedan', 'coupe', 'taxi', 'truck', 'van', 'sports', 'limo'];
 
 /** A fresh car at a place, facing an angle, of a type, with a role (traffic, parked, player, police). */
 export function createCar(random, x, y, angle, type, kind) {
@@ -58,7 +59,7 @@ export function spawnTraffic(city, random) {
     cars.push(car);
   }
   // Parked cars along the curbs, free for the taking.
-  for (let i = 0; i < 14; i += 1) {
+  for (let i = 0; i < 18; i += 1) {
     const spot = randomRoadSpot(city, random);
     const type = pickOne(random, TRAFFIC_TYPES);
     const angle = spot.axis === 'v' ? (spot.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (spot.dir > 0 ? 0 : Math.PI);

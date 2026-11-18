@@ -1,15 +1,16 @@
 // The screenshot scenes behind ?shot=cover|street|drive|mission. Each one plays the real
 // rules forward from a fresh world for a fixed number of steps, steered by a simple autopilot,
 // so the frame is what a short game really looks like and the same seed always gives the
-// same frame. The cover is a chase: the player in a sports car, three stars, two cop cars
-// behind, the Big Score's escape on the HUD.
+// same frame. The cover is the Harbor Heist escape at dusk: five stars, the helicopter
+// overhead, a roadblock on the road ahead, and two cop cars on the player's tail.
 
-import { STEP } from './config.js';
+import { DAY, STEP } from './config.js';
 import { nearestRoad } from './city.js';
 import { createEnemy } from './combat.js';
+import { raceTarget, startRace } from './activities.js';
 import { SCREEN_PLAY } from './render.js';
 
-const COVER_SECONDS = 5;
+const COVER_SECONDS = 3.5;
 const STREET_SECONDS = 4;
 const DRIVE_SECONDS = 5;
 const MISSION_SECONDS = 2.5;
@@ -77,14 +78,15 @@ function driveInput(pilot, car, aim) {
   return { ...idleInput(aim), steer: drive.steer, throttle: drive.throttle, brake: drive.brake };
 }
 
-/** The chase: the Big Score's escape, three stars, two cop cars on the player's tail. */
+/** The chase: the Harbor Heist escape at dusk, five stars, the helicopter overhead. */
 function stageCover(world) {
   const state = world.state;
   world.reset();
-  state.missions.index = 4;
+  state.time = DAY.length * 0.6; // dusk, about 20:24: the warm wash, before the headlights come on
+  state.missions.index = 9;
   state.missions.step = 2;
   state.missions.active = true;
-  world.setWanted(4);
+  world.setWanted(5);
   world.giveCar('sports', 2048, 1536, 0);
   world.spawnCopsNow(2);
   // Pull the cops in close behind, so the chase fills the frame.
@@ -99,7 +101,8 @@ function stageCover(world) {
   const aim = { x: state.player.x + 400, y: state.player.y };
   for (let i = 0; i < COVER_SECONDS / STEP; i += 1) {
     // A staged chase only reads as a chase while the cops are in the frame: every half
-    // second, pull them back in behind the player at chase speed.
+    // second, pull them back in behind the player at chase speed, and keep the
+    // helicopter above and to the left of the player so its searchlight reads.
     if (i % 30 === 0) {
       const car = state.player.car;
       const back = car.angle + Math.PI;
@@ -109,17 +112,40 @@ function stageCover(world) {
         cop.angle = car.angle;
         cop.speed = Math.max(car.speed * 0.95, 300);
       });
+      if (state.heli) {
+        state.heli.x = car.x - 320;
+        state.heli.y = car.y - 280;
+      }
     }
     world.step(STEP, driveInput(pilot, state.player.car, aim));
+  }
+  // The roadblock goes down ahead of the player: pull the one that spawned onto the
+  // road in front of the car, so the frame shows the chase, the helicopter and the block.
+  if (state.roadblocks.length > 0) {
+    const car = state.player.car;
+    const block = state.roadblocks[0];
+    const bx = car.x + Math.cos(car.angle) * 430;
+    const by = car.y + Math.sin(car.angle) * 430;
+    const px = Math.cos(car.angle + Math.PI / 2);
+    const py = Math.sin(car.angle + Math.PI / 2);
+    block.x = bx;
+    block.y = by;
+    block.angle = car.angle;
+    block.cars.forEach((blockCar, i) => {
+      const side = i === 0 ? -1 : 1;
+      blockCar.x = bx + px * side * 40;
+      blockCar.y = by + py * side * 40;
+      blockCar.angle = car.angle;
+    });
   }
   return { screen: SCREEN_PLAY, best: state.stats.earned };
 }
 
-/** On foot in Old Town: the first job, traffic and pedestrians, a car waiting to be taken. */
+/** On foot in Calle Ocho: the market street, traffic and pedestrians, a car waiting to be taken, and a hidden package on the corner. */
 function stageStreet(world) {
   const state = world.state;
   world.reset();
-  world.placePlayer(1024, 1100);
+  world.placePlayer(512, 2100);
   const aim = { x: state.player.x, y: state.player.y };
   for (let i = 0; i < STREET_SECONDS / STEP; i += 1) {
     // Walk toward the nearest car, as a player starting the first job would.
@@ -146,11 +172,19 @@ function stageStreet(world) {
   return { screen: SCREEN_PLAY, best: 0 };
 }
 
-/** Flat out down the coastal avenue in a coupe, traffic all around, no heat. */
+/** The Grand Prix, mid-race: a coupe flat out down the coastal avenue, the race clock on the HUD and the first checkpoint on the map. */
 function stageDrive(world) {
   const state = world.state;
   world.reset();
+  state.time = DAY.length * 0.29; // midday, about 13:00: full daylight for the race
+  state.missions.index = 6;
+  state.missions.step = 1;
+  state.missions.active = true;
   world.giveCar('coupe', 1024, 3584, 0);
+  startRace(state.race, state.city, state.random);
+  state.missions.raceLaps = 0;
+  state.missions.raceStarted = true;
+  state.raceMarker = raceTarget(state.race);
   const pilot = roadPilot(state.city, state.random, 0);
   pilot.reset(state.player.car, { axis: 'h', line: 3584, dir: 1 });
   const aim = { x: state.player.x + 400, y: state.player.y };
@@ -160,20 +194,25 @@ function stageDrive(world) {
   return { screen: SCREEN_PLAY, best: 0 };
 }
 
-/** The Viper Nest: the player on foot, pistol out, three Vipers closing in. */
+/** The Harbor Heist: the player on foot at the Port Gate, shotgun out, three Vipers and an enforcer closing in while four stars bring the helicopter up. */
 function stageMission(world) {
   const state = world.state;
   world.reset();
-  state.missions.index = 2;
+  state.time = DAY.length * 0.708; // midnight, about 23:00: the searchlight and the headlights show
+  state.missions.index = 9;
   state.missions.step = 1;
   state.missions.active = true;
-  world.placePlayer(3584, 2560);
+  world.placePlayer(2560, 3584);
+  world.setWanted(4);
   state.player.hasPistol = true;
+  state.player.hasShotgun = true;
+  state.player.weapon = 'shotgun';
   state.player.ammo = 24;
   for (let i = 0; i < 3; i += 1) {
     const angle = (i / 3) * Math.PI * 2 + 0.6;
-    state.enemies.push(createEnemy(state.random, 3584 + Math.cos(angle) * 130, 2560 + Math.sin(angle) * 130));
+    state.enemies.push(createEnemy(state.random, 2560 + Math.cos(angle) * 130, 3584 + Math.sin(angle) * 130));
   }
+  state.enemies.push(createEnemy(state.random, 2560 + 190, 3584 - 90, 'enforcer'));
   for (let i = 0; i < MISSION_SECONDS / STEP; i += 1) {
     let nearest = null;
     let nearestD = Infinity;

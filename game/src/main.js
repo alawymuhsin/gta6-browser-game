@@ -9,7 +9,7 @@
 import { STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createWorld } from './world.js';
-import { ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
+import { ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, ACTION_RADIO, createInput } from './input.js';
 import { createRenderer, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { createAudio } from './audio.js';
 import { stageShot } from './shots.js';
@@ -52,6 +52,9 @@ function applySave(save) {
   player.health = save.health;
   player.ammo = save.ammo;
   player.hasPistol = save.hasPistol;
+  player.hasShotgun = save.hasShotgun ?? false;
+  player.weapon = save.weapon ?? 'pistol';
+  world.state.safehouseOwned = save.safehouseOwned ?? false;
   world.state.stats = { ...world.state.stats, ...save.stats };
   missions.index = save.missionIndex;
   missions.storyDone = save.storyDone;
@@ -88,6 +91,9 @@ function runShot(name) {
           speed: Math.round(cop.speed),
           distance: Math.round(Math.hypot(cop.x - player.x, cop.y - player.y)),
         })),
+        heli: world.state.heli ? { x: Math.round(world.state.heli.x), y: Math.round(world.state.heli.y) } : null,
+        race: world.state.race.active ? { checkpoint: world.state.race.index + 1, of: world.state.race.checkpoints.length, timer: Math.round(world.state.race.timer) } : null,
+        roadblocks: world.state.roadblocks.length,
       };
       window.__shotReady = true;
     }
@@ -112,14 +118,15 @@ function runGame() {
   function playEventSounds(events) {
     for (const event of events) {
       if (event.kind === 'shot') audio.gunshot();
+      else if (event.kind === 'shotgun') audio.shotgun();
       else if (event.kind === 'punch') audio.punch();
       else if (event.kind === 'pickup-health' || event.kind === 'pickup-ammo') audio.pickup();
-      else if (event.kind === 'pickup-cash' || event.kind === 'fare') audio.cash();
+      else if (event.kind === 'pickup-cash' || event.kind === 'fare' || event.kind === 'delivery-done' || event.kind === 'collectible') audio.cash();
       else if (event.kind === 'crash' || event.kind === 'ram' || event.kind === 'car-wrecked' || event.kind === 'cop-down') audio.crash();
-      else if (event.kind === 'steal') audio.horn();
-      else if (event.kind === 'mission-done' || event.kind === 'story-done') audio.jingle();
-      else if (event.kind === 'step-done') audio.pickup();
-      else if (event.kind === 'busted') audio.bust();
+      else if (event.kind === 'steal' || event.kind === 'horn' || event.kind === 'roadblock') audio.horn();
+      else if (event.kind === 'mission-done' || event.kind === 'story-done' || event.kind === 'race-won') audio.jingle();
+      else if (event.kind === 'step-done' || event.kind === 'race-checkpoint' || event.kind === 'delivery-picked') audio.pickup();
+      else if (event.kind === 'busted' || event.kind === 'race-lost') audio.bust();
       else if (event.kind === 'wasted') audio.wasted();
       else if (event.kind === 'enemy-down') audio.punch();
     }
@@ -130,6 +137,10 @@ function runGame() {
     if (actions & ACTION_MUTE) {
       audio.setMuted(!audio.isMuted());
       announce(audio.isMuted() ? 'Sound off.' : 'Sound on.');
+    }
+    if (actions & ACTION_RADIO) {
+      const station = audio.nextStation();
+      announce(station === 'Radio off' ? 'Radio off.' : `Radio: ${station}.`);
     }
     if (screen === SCREEN_TITLE) {
       if (actions & ACTION_CONFIRM) {
@@ -168,6 +179,7 @@ function runGame() {
       const idle = {
         moveX: 0, moveY: 0, run: false, steer: 0, throttle: 0, brake: 0,
         interact: false, interactHeld: false, punch: false, shoot: false,
+        horn: false, weapon: false,
         aimX: world.state.player.x, aimY: world.state.player.y,
       };
       world.step(STEP, idle);
@@ -186,12 +198,16 @@ function runGame() {
       if (event.kind === 'busted') announce('Busted. The cops took their cut.');
       else if (event.kind === 'wasted') announce('Wasted. You woke up at the hospital.');
       else if (event.kind === 'mission-done') announce(`${event.title} done.`);
-      else if (event.kind === 'story-done') announce('The Big Score is done. Solara Bay is yours.');
+      else if (event.kind === 'story-done') announce('The Harbor Heist is done. Solara Bay is yours.');
+      else if (event.kind === 'race-won') announce(`Race won — $${event.amount}.`);
+      else if (event.kind === 'roadblock') announce('Roadblock ahead.');
     }
-    // The engine and the siren follow the game; the music keeps its own time.
+    // The engine, the siren and the rotor follow the game; the music keeps its own time.
     const player = world.state.player;
     audio.engine(player.car ? Math.min(1, player.car.speed / 420) : 0);
     audio.siren(player.wanted > 0 && world.state.cops.length > 0);
+    audio.rotor(!!world.state.heli);
+    audio.setRadioInCar(!!player.car);
     audio.music(STEP);
     if (world.state.stats.earned > best) best = world.state.stats.earned;
   }
@@ -205,7 +221,7 @@ function runGame() {
       step();
       accumulator -= STEP;
     }
-    renderer.draw(world.state, screen, { best, saveExists, muted: audio.isMuted() });
+    renderer.draw(world.state, screen, { best, saveExists, muted: audio.isMuted(), radio: audio.radioName(!!world.state.player.car) });
   }
 
   // Leaving the tab pauses a running game rather than letting the city run unseen.
