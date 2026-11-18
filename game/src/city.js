@@ -1,21 +1,22 @@
-// The city of Solara Bay: a road grid, the blocks between the roads, the buildings and parks
-// in them, the bay along the south edge, and the landmarks the story points at. Everything is
-// dealt from the seed, so the same seed always builds the same city. Eight districts now,
-// each with its own roof palette, so the town reads differently from the air.
+// Solara Bay's layout: a grid of roads, the blocks between them with their
+// buildings and parks, the bay along the south shore, and the landmarks the
+// story walks the player between. One seed always deals the same town, so a
+// staged screenshot and a live run see the same streets. Eight districts,
+// each with its own roof colours, so the quarters read apart from above.
 
 import { DISTRICT_ROOFS, WORLD } from './config.js';
 import { pickInt, pickOne } from './random.js';
 
-const PARK_TREES = 7;
+const TREES_PER_PARK = 7;
 
-/** The bay: everything south of this y is water, and nothing is built there. */
+/** South of this y is water; nothing is ever built past it. */
 export const WATER_Y = 3840;
 
 /** The eight districts, in the order the HUD's location line names them. */
 export const DISTRICTS = ['Old Town', 'Downtown', 'Industrial', 'Marina', 'Calle Ocho', 'Northside', 'Portside', 'Vista Heights'];
 
-/** Landmarks, each on a road corner so the player can always reach them. */
-const LANDMARK_SPOTS = {
+/** Landmarks, each sitting on a road corner so the player can always drive up to them. */
+const SPOTS = {
   garage: { x: 1024, y: 1536, label: "Maya's Garage" },
   bank: { x: 2048, y: 2048, label: 'Solara Bank' },
   hospital: { x: 3072, y: 1024, label: 'St. Anselm Hospital' },
@@ -31,11 +32,12 @@ const LANDMARK_SPOTS = {
 };
 
 /**
- * The district at a point. The south shore is the Marina, the east yards are Industrial
- * and Portside, the north-east rise is Vista Heights, the north centre is Northside, the
- * west strip is Calle Ocho, and the rest splits into Old Town and Downtown.
+ * Which district a point falls in. The far south shore is Marina (Portside
+ * past the east yards), the north-east rise is Vista Heights, the north
+ * centre is Northside, the west strip is Calle Ocho, the east yards are
+ * Industrial, and the middle splits into Old Town and Downtown.
  */
-function districtAt(x, y) {
+function districtFor(x, y) {
   if (y > 3328) return x > 2688 ? 'Portside' : 'Marina';
   if (y < 1024) return x > 2688 ? 'Vista Heights' : x > 1408 ? 'Northside' : 'Old Town';
   if (x < 1024) return 'Calle Ocho';
@@ -44,43 +46,43 @@ function districtAt(x, y) {
   return 'Downtown';
 }
 
-/** The roof palette of the district at a point. */
+/** The roof palette of the district a point falls in. */
 export function districtRoofs(x, y) {
-  return DISTRICT_ROOFS[districtAt(x, y)] ?? DISTRICT_ROOFS.Downtown;
+  return DISTRICT_ROOFS[districtFor(x, y)] ?? DISTRICT_ROOFS.Downtown;
 }
 
-function roadLines() {
+function gridLines() {
   const lines = [];
   for (let at = 0; at <= WORLD.size; at += WORLD.roadPitch) lines.push(at);
   return lines;
 }
 
-function buildBlocks(random) {
+function layOutBlocks(random) {
   const buildings = [];
   const parks = [];
   const pitch = WORLD.roadPitch;
   const edge = WORLD.roadWidth / 2 + 14;
-  for (let bx = 0; bx < 8; bx += 1) {
-    for (let by = 0; by < 8; by += 1) {
-      const x0 = bx * pitch + edge;
-      const y0 = by * pitch + edge;
-      const x1 = (bx + 1) * pitch - edge;
-      const y1 = (by + 1) * pitch - edge;
+  for (let col = 0; col < 8; col += 1) {
+    for (let row = 0; row < 8; row += 1) {
+      const x0 = col * pitch + edge;
+      const y0 = row * pitch + edge;
+      const x1 = (col + 1) * pitch - edge;
+      const y1 = (row + 1) * pitch - edge;
       if (y0 >= WATER_Y - 40) continue;
-      const roll = random();
-      if (roll < 0.1) {
-        // The park's rectangle is clipped at the shore, and the trees must be planted
-        // inside that clipped rectangle, not the unclipped block, or they grow in the bay.
+      const draw = random();
+      if (draw < 0.1) {
+        // The park is clipped at the shore, so its trees are planted inside
+        // the clipped rectangle — never in the bay below it.
         const parkH = Math.min(y1, WATER_Y - 40) - y0;
         const trees = [];
-        for (let t = 0; t < PARK_TREES; t += 1) {
+        for (let t = 0; t < TREES_PER_PARK; t += 1) {
           trees.push({ x: x0 + 30 + random() * (x1 - x0 - 60), y: y0 + 30 + random() * (parkH - 60), r: 12 + random() * 10 });
         }
         parks.push({ x: x0, y: y0, w: x1 - x0, h: parkH, trees });
         continue;
       }
-      if (roll < 0.18) continue; // an empty lot: a car park with room to turn in
-      const district = districtAt(x0 + 100, y0 + 100);
+      if (draw < 0.18) continue; // an empty lot: a car park with room to turn in
+      const district = districtFor(x0 + 100, y0 + 100);
       const count = district === 'Downtown' || district === 'Vista Heights' ? pickInt(random, 1, 2) : pickInt(random, 1, 3);
       for (let n = 0; n < count; n += 1) {
         const w = 70 + random() * 130;
@@ -102,20 +104,20 @@ function buildBlocks(random) {
 }
 
 export function buildCity(random) {
-  const { buildings, parks } = buildBlocks(random);
+  const { buildings, parks } = layOutBlocks(random);
   return {
     size: WORLD.size,
-    lines: roadLines(),
+    lines: gridLines(),
     buildings,
     parks,
-    landmarks: LANDMARK_SPOTS,
+    landmarks: SPOTS,
   };
 }
 
 /** The district name at a point, for the HUD's location line. */
 export function districtName(city, x, y) {
   if (y > WATER_Y) return 'The Bay';
-  return districtAt(x, y);
+  return districtFor(x, y);
 }
 
 /** Where a landmark sits, by its key (garage, bank, hospital, policeHq, safehouse, vipers, diner, port, raceGate, market, university, observatory). */

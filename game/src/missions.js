@@ -1,123 +1,84 @@
-// The story: ten jobs for Maya Solis, the fixer who runs Solara Bay from a garage in Old
-// Town, and the taxi fares that keep the meter running once the story is done. A mission is a
-// list of steps; each step names what to do and where, and the world answers when it is done.
-// The current mission is always live: the marker on the map is the next step, and the HUD
-// carries its text, so the game never leaves the player guessing. The second half of the
-// story is where the city answers back: a broadcast van to steal, a street race through
-// four checkpoints, a safehouse to take back from the Vipers, a helicopter overhead, and
-// one last heist at the harbor.
+// The story: ten jobs for Maya Solis, the fixer who runs Solara Bay out of
+// a garage in Old Town, plus the taxi fares that keep the meter running once
+// the story is over. A mission is a list of steps; each step says what to do
+// and where, and the world reports back when it is done. The current mission
+// is always live: the marker shows the next step and the HUD carries its
+// text, so the player is never left guessing. The back half of the story is
+// where the city answers back: a broadcast van to steal, a street race over
+// four checkpoints, a safehouse to take back from the Vipers, a helicopter
+// overhead, and one last heist at the harbor.
 
 export const MISSIONS = [
-  {
-    id: 'wheels',
-    title: 'First Wheels',
-    giver: 'Maya Solis',
+  { id: 'wheels', title: 'First Wheels', giver: 'Maya Solis',
     briefing: 'You need wheels in this town, Jax. Take any car on the street — nobody here locks theirs — and bring it to my garage.',
     reward: 200,
     steps: [
       { type: 'steal', text: 'Steal a car (walk up to one and press E)' },
       { type: 'go', text: "Drive to Maya's Garage", landmark: 'garage', radius: 110 },
-    ],
-  },
-  {
-    id: 'package',
-    title: 'The Package',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'package', title: 'The Package', giver: 'Maya Solis',
     briefing: 'A package is waiting at the Blue Diner. Pick it up, then run it to the Port Gate. The buyer does not like waiting.',
     reward: 400,
     steps: [
       { type: 'pickup', text: 'Pick up the package at the Blue Diner (press E)', landmark: 'diner', radius: 80 },
       { type: 'timed', text: 'Deliver the package to the Port Gate', landmark: 'port', radius: 90, seconds: 90 },
-    ],
-  },
-  {
-    id: 'vipers',
-    title: 'Viper Nest',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'vipers', title: 'Viper Nest', giver: 'Maya Solis',
     briefing: 'The Vipers have been taxing my drivers. Go to their turf by the east yards and remind them who runs this side of the bay.',
     reward: 600,
     steps: [
       { type: 'go', text: 'Go to the Viper Turf', landmark: 'vipers', radius: 130 },
       { type: 'fight', text: 'Deal with the Vipers (3)', landmark: 'vipers', radius: 260, enemies: 3 },
-    ],
-  },
-  {
-    id: 'heat',
-    title: 'Heat',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'heat', title: 'Heat', giver: 'Maya Solis',
     briefing: 'The precinct put your face on the board. Three stars, Jax. Stay out of their hands for a minute and they will lose interest.',
     reward: 800,
     steps: [
       { type: 'survive', text: 'Lose the cops — survive 60 seconds at 3 stars', seconds: 60, wanted: 3 },
-    ],
-  },
-  {
-    id: 'score',
-    title: 'The Big Score',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'score', title: 'The Big Score', giver: 'Maya Solis',
     briefing: 'One last job. The Solara Bank vault holds the week’s take. Get in, hold the door, grab the cash, and get out to the safehouse before the whole city wakes up.',
     reward: 2500,
     steps: [
       { type: 'go', text: 'Get to the Solara Bank', landmark: 'bank', radius: 100 },
       { type: 'hold', text: 'Hold E at the vault door to crack it', landmark: 'bank', radius: 90, seconds: 5 },
       { type: 'go', text: 'Escape to the Safehouse — the whole city is coming', landmark: 'safehouse', radius: 110, wanted: 4 },
-    ],
-  },
-  {
-    id: 'radio',
-    title: 'Radio Silence',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'radio', title: 'Radio Silence', giver: 'Maya Solis',
     briefing: 'The Vipers run a pirate station out of a broadcast van by the docks. Take the van — not just any car, the van — and bring it to my garage before they notice it is gone.',
     reward: 900,
     steps: [
       { type: 'steal-van', text: 'Steal a van (any van on the street, press E)' },
       { type: 'timed', text: "Drive the van to Maya's Garage", landmark: 'garage', radius: 110, seconds: 120 },
-    ],
-  },
-  {
-    id: 'prix',
-    title: 'Grand Prix',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'prix', title: 'Grand Prix', giver: 'Maya Solis',
     briefing: 'The street racers meet at the Race Gate on the coastal road. Four checkpoints, one clock, no cops invited. Win it and the whole town knows your name.',
     reward: 1200,
     steps: [
       { type: 'go', text: 'Get to the Race Gate on the coastal road', landmark: 'raceGate', radius: 110 },
       { type: 'race', text: 'Race the checkpoints — beat the clock' },
-    ],
-  },
-  {
-    id: 'safehouse',
-    title: 'The Safehouse',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'safehouse', title: 'The Safehouse', giver: 'Maya Solis',
     briefing: 'The old safehouse on the west side is Viper-held now, and I want it back. Clear the block — four of them, Jax — and the place is yours: a bed, a save, and a shotgun in the closet.',
     reward: 1000,
     steps: [
       { type: 'go', text: 'Get to the Safehouse', landmark: 'safehouse', radius: 130 },
       { type: 'fight', text: 'Clear the Safehouse block (4)', landmark: 'safehouse', radius: 260, enemies: 4, enforcers: 1 },
-    ],
-  },
-  {
-    id: 'air',
-    title: 'Air Support',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'air', title: 'Air Support', giver: 'Maya Solis',
     briefing: 'Four stars, Jax, and this time they sent the helicopter. It watches from above and calls the ground cars in. Stay free for seventy-five seconds and it runs out of fuel.',
     reward: 1500,
     steps: [
       { type: 'survive', text: 'Stay free with the helicopter overhead — 75 seconds at 4 stars', seconds: 75, wanted: 4 },
-    ],
-  },
-  {
-    id: 'harbor',
-    title: 'Harbor Heist',
-    giver: 'Maya Solis',
+    ] },
+  { id: 'harbor', title: 'Harbor Heist', giver: 'Maya Solis',
     briefing: 'The last job, and the biggest. A shipment lands at the Port Gate at midnight: hold the dock, load the crates, and run the whole load to the Marina while five stars come down on you.',
     reward: 5000,
     steps: [
       { type: 'go', text: 'Get to the Port Gate', landmark: 'port', radius: 100 },
       { type: 'hold', text: 'Hold E at the dock to load the shipment', landmark: 'port', radius: 90, seconds: 6 },
       { type: 'go', text: 'Run the load to the Marina — five stars, no stopping', landmark: 'raceGate', radius: 110, wanted: 5 },
-    ],
-  },
+    ] },
 ];
 
 export function createMissionState() {
@@ -158,7 +119,7 @@ export function stepTarget(state, city) {
   return null;
 }
 
-function startStep(state, city) {
+function openStep(state, city) {
   const step = currentStep(state);
   if (!step) return [];
   state.timer = step.seconds ?? 0;
@@ -177,7 +138,7 @@ function startStep(state, city) {
 export function beginMission(state, city) {
   state.step = 0;
   state.active = true;
-  return startStep(state, city);
+  return openStep(state, city);
 }
 
 /** Fail the current mission: it restarts from its first step with a message. */
@@ -213,7 +174,7 @@ export function updateMissions(state, city, ctx, dt) {
   if (state.messageTime > 0) state.messageTime -= dt;
   const mission = currentMission(state);
   if (!mission || !state.active) {
-    updateFare(state, city, ctx, dt);
+    advanceFare(state, city, ctx, dt);
     return events;
   }
   const step = currentStep(state);
@@ -280,7 +241,7 @@ export function updateMissions(state, city, ctx, dt) {
     }
   } else {
     events.push({ kind: 'step-done', text: step.text });
-    events.push(...startStep(state, city));
+    events.push(...openStep(state, city));
   }
   return events;
 }
@@ -303,7 +264,7 @@ export function offerFare(state, city, random) {
   return state.fare;
 }
 
-function updateFare(state, city, ctx, dt) {
+function advanceFare(state, city, ctx, dt) {
   if (!state.storyDone) return;
   state.fareCooldown -= dt;
   if (!state.fare && state.fareCooldown <= 0) {

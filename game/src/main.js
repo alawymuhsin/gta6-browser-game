@@ -1,11 +1,12 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s
-// steps (several in a slow frame, none in a fast one), and the renderer paints what is there.
-// The game moves between three screens: title, play and paused. Wasted and busted are not
-// screens: the world respawns the player and the banner says what it cost.
+// Boot and the one loop: every frame the input is read, the world moves in
+// fixed 1/60 s steps (several in a slow frame, none in a fast one), and the
+// renderer paints what is there. The game has three screens — title, play,
+// paused. Wasted and busted are not screens: the world respawns the player
+// and the banner says what it cost.
 //
-// ?seed=N fixes the city's seed. ?shot=cover|street|drive|mission (with &seed=N) stages that
-// scene instead of running the loop, paints it twice and sets window.__shotReady for a
-// screenshot.
+// ?seed=N fixes the city's seed. ?shot=cover|street|drive|mission (with
+// &seed=N) stages that scene instead of running the loop, paints it twice and
+// sets window.__shotReady for a screenshot.
 import { STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createWorld } from './world.js';
@@ -17,27 +18,28 @@ import { stageShot } from './shots.js';
 /** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
 const MAX_FRAME = 0.25;
 
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
+const query = new URLSearchParams(window.location.search);
+const shotName = query.get('shot');
+const seedParam = Number.parseInt(query.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
 const canvas = document.getElementById('game');
 const status = document.getElementById('status');
 const world = createWorld(createRandom(seed));
-// A read-only handle for play-testing: ?debug exposes the world so a test can watch the
-// player steal a car and drive it, the way a human would. It changes nothing in the game.
-if (params.has('debug')) window.__game = world;
+// A read-only handle for play-testing: ?debug exposes the world so a test can
+// watch the player steal a car and drive it, the way a human would. It changes
+// nothing in the game.
+if (query.has('debug')) window.__game = world;
 const renderer = createRenderer(canvas);
 const audio = createAudio();
-let newGameKey = false;
+let freshStartKey = false;
 
 window.addEventListener('keydown', (event) => {
-  if (event.code === 'KeyN') newGameKey = true;
+  if (event.code === 'KeyN') freshStartKey = true;
   audio.ensure();
 });
 canvas.addEventListener('pointerdown', () => audio.ensure());
 
-function readBest() {
+function loadBest() {
   try {
     return Number.parseInt(window.localStorage.getItem('solara-bay.best.v1') ?? '0', 10) || 0;
   } catch {
@@ -45,7 +47,7 @@ function readBest() {
   }
 }
 
-function applySave(save) {
+function restoreSave(save) {
   const player = world.state.player;
   const missions = world.state.missions;
   player.money = save.money;
@@ -63,10 +65,10 @@ function applySave(save) {
   // startGame calls beginStory next, which starts the first step of this mission.
 }
 
-function startGame(continueSave) {
+function startGame(keepSave) {
   world.reset();
-  const save = continueSave ? world.load() : null;
-  if (save) applySave(save);
+  const save = keepSave ? world.load() : null;
+  if (save) restoreSave(save);
   world.beginStory();
   return SCREEN_PLAY;
 }
@@ -77,26 +79,27 @@ function runShot(name) {
   function paint() {
     renderer.draw(world.state, scene.screen, { best: scene.best, saveExists: false, muted: audio.isMuted() });
     painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else {
-      // Staged-shot readout for the screenshot tooling: where the player and the
-      // cops ended up, so a shot can be checked without squinting at pixels.
-      const player = world.state.player;
-      window.__shotDebug = {
-        shot: name,
-        player: { x: Math.round(player.x), y: Math.round(player.y), speed: Math.round(player.car ? player.car.speed : 0), wanted: player.wanted },
-        cops: world.state.cops.map((cop) => ({
-          x: Math.round(cop.x),
-          y: Math.round(cop.y),
-          speed: Math.round(cop.speed),
-          distance: Math.round(Math.hypot(cop.x - player.x, cop.y - player.y)),
-        })),
-        heli: world.state.heli ? { x: Math.round(world.state.heli.x), y: Math.round(world.state.heli.y) } : null,
-        race: world.state.race.active ? { checkpoint: world.state.race.index + 1, of: world.state.race.checkpoints.length, timer: Math.round(world.state.race.timer) } : null,
-        roadblocks: world.state.roadblocks.length,
-      };
-      window.__shotReady = true;
+    if (painted < 2) {
+      requestAnimationFrame(paint);
+      return;
     }
+    // Staged-shot readout for the screenshot tooling: where the player and the
+    // cops ended up, so a shot can be checked without squinting at pixels.
+    const player = world.state.player;
+    window.__shotDebug = {
+      shot: name,
+      player: { x: Math.round(player.x), y: Math.round(player.y), speed: Math.round(player.car ? player.car.speed : 0), wanted: player.wanted },
+      cops: world.state.cops.map((cop) => ({
+        x: Math.round(cop.x),
+        y: Math.round(cop.y),
+        speed: Math.round(cop.speed),
+        distance: Math.round(Math.hypot(cop.x - player.x, cop.y - player.y)),
+      })),
+      heli: world.state.heli ? { x: Math.round(world.state.heli.x), y: Math.round(world.state.heli.y) } : null,
+      race: world.state.race.active ? { checkpoint: world.state.race.index + 1, of: world.state.race.checkpoints.length, timer: Math.round(world.state.race.timer) } : null,
+      roadblocks: world.state.roadblocks.length,
+    };
+    window.__shotReady = true;
   }
   requestAnimationFrame(paint);
 }
@@ -104,7 +107,7 @@ function runShot(name) {
 function runGame() {
   const input = createInput(canvas);
   let screen = SCREEN_TITLE;
-  let best = readBest();
+  let best = loadBest();
   let accumulator = 0;
   let last = performance.now();
   let attractTime = 0;
@@ -115,20 +118,21 @@ function runGame() {
     status.textContent = message;
   }
 
+  const SOUND_FOR = {
+    shot: 'gunshot', shotgun: 'shotgun', punch: 'punch', 'enemy-down': 'punch',
+    'pickup-health': 'pickup', 'pickup-ammo': 'pickup', 'step-done': 'pickup',
+    'race-checkpoint': 'pickup', 'delivery-picked': 'pickup',
+    'pickup-cash': 'cash', fare: 'cash', 'delivery-done': 'cash', collectible: 'cash',
+    crash: 'crash', ram: 'crash', 'car-wrecked': 'crash', 'cop-down': 'crash',
+    steal: 'horn', horn: 'horn', roadblock: 'horn',
+    'mission-done': 'jingle', 'story-done': 'jingle', 'race-won': 'jingle',
+    busted: 'bust', 'race-lost': 'bust', wasted: 'wasted',
+  };
+
   function playEventSounds(events) {
     for (const event of events) {
-      if (event.kind === 'shot') audio.gunshot();
-      else if (event.kind === 'shotgun') audio.shotgun();
-      else if (event.kind === 'punch') audio.punch();
-      else if (event.kind === 'pickup-health' || event.kind === 'pickup-ammo') audio.pickup();
-      else if (event.kind === 'pickup-cash' || event.kind === 'fare' || event.kind === 'delivery-done' || event.kind === 'collectible') audio.cash();
-      else if (event.kind === 'crash' || event.kind === 'ram' || event.kind === 'car-wrecked' || event.kind === 'cop-down') audio.crash();
-      else if (event.kind === 'steal' || event.kind === 'horn' || event.kind === 'roadblock') audio.horn();
-      else if (event.kind === 'mission-done' || event.kind === 'story-done' || event.kind === 'race-won') audio.jingle();
-      else if (event.kind === 'step-done' || event.kind === 'race-checkpoint' || event.kind === 'delivery-picked') audio.pickup();
-      else if (event.kind === 'busted' || event.kind === 'race-lost') audio.bust();
-      else if (event.kind === 'wasted') audio.wasted();
-      else if (event.kind === 'enemy-down') audio.punch();
+      const sound = SOUND_FOR[event.kind];
+      if (sound) audio[sound]();
     }
   }
 
@@ -144,14 +148,14 @@ function runGame() {
     }
     if (screen === SCREEN_TITLE) {
       if (actions & ACTION_CONFIRM) {
-        screen = startGame(saveExists && !newGameKey);
+        screen = startGame(saveExists && !freshStartKey);
         saveExists = !!world.load();
         announce('Playing. Follow the gold marker.');
-      } else if (newGameKey && saveExists) {
+      } else if (freshStartKey && saveExists) {
         screen = startGame(false);
         announce('New game. Follow the gold marker.');
       }
-      newGameKey = false;
+      freshStartKey = false;
     } else if (screen === SCREEN_PLAY) {
       if (actions & ACTION_PAUSE) {
         screen = SCREEN_PAUSED;
@@ -236,5 +240,5 @@ function runGame() {
   requestAnimationFrame(frame);
 }
 
-if (shot) runShot(shot);
+if (shotName) runShot(shotName);
 else runGame();

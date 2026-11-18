@@ -1,10 +1,12 @@
-// The game's rules and state, with no drawing and no browser in it: the player on foot or
-// behind the wheel, the traffic, the pedestrians, the police, the missions, the wanted level,
-// money, health and the save. step() advances one fixed step and returns what happened as
-// events, so the caller can play sounds and announce without the world knowing about them.
-// The second half of the story adds the systems that answer back: a police helicopter and
-// roadblocks at high heat, street races and deliveries after the story, hidden packages
-// around the city, a safehouse that heals and saves, and a shotgun in its closet.
+// The game's rules and state, with no drawing and no browser in it: the
+// player on foot or behind the wheel, the traffic, the pedestrians, the
+// police, the missions, the wanted level, money, health and the save. step()
+// moves one fixed step and returns what happened as events, so the caller can
+// play sounds and announce without the world knowing about them. The back
+// half of the story adds the systems that answer back: a police helicopter and
+// roadblocks at high heat, street races and deliveries after the story, hidden
+// packages around the city, a safehouse that heals and saves, and a shotgun in
+// its closet.
 
 import { BEST_KEY, PLAYER, SAVE_KEY, SHOTGUN, WANTED } from './config.js';
 import { createRandom } from './random.js';
@@ -22,7 +24,7 @@ import {
 
 export const EVENT_NONE = 0;
 
-function readSave() {
+function fetchSave() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -31,7 +33,7 @@ function readSave() {
   }
 }
 
-function readBest() {
+function fetchBest() {
   try {
     return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
   } catch {
@@ -39,7 +41,7 @@ function readBest() {
   }
 }
 
-function writeBest(value) {
+function storeBest(value) {
   try {
     window.localStorage.setItem(BEST_KEY, String(value));
   } catch { /* a best score that cannot be kept is no reason to stop playing */ }
@@ -84,10 +86,10 @@ export function createWorld(random) {
   };
   state.cars = spawnTraffic(city, random);
   state.peds = spawnPedestrians(city, random);
-  state.pickups = spawnPickups(city, random);
+  state.pickups = makePickups(city, random);
   return { state, city, reset, step, save, load, placePlayer, giveCar, setWanted, spawnCopsNow, beginStory };
 
-  function spawnPickups(cityArg, rand) {
+  function makePickups(cityArg, rand) {
     const spots = [
       { kind: 'health', at: landmark(cityArg, 'hospital') },
       { kind: 'health', at: landmark(cityArg, 'diner') },
@@ -122,7 +124,7 @@ export function createWorld(random) {
     state.cops = [];
     state.bullets = [];
     state.enemies = [];
-    state.pickups = spawnPickups(city, random);
+    state.pickups = makePickups(city, random);
     state.particles = [];
     state.heli = null;
     state.roadblocks = [];
@@ -162,7 +164,7 @@ export function createWorld(random) {
     state.player.lastCrime = state.time;
   }
 
-  function addWanted(value) {
+  function raiseWanted(value) {
     if (value <= 0) return;
     setWanted(state.player.wanted + value);
   }
@@ -195,11 +197,11 @@ export function createWorld(random) {
         stats: state.stats,
       }));
     } catch { /* a save that cannot be kept is no reason to stop playing */ }
-    if (state.stats.earned > readBest()) writeBest(state.stats.earned);
+    if (state.stats.earned > fetchBest()) storeBest(state.stats.earned);
   }
 
   function load() {
-    return readSave();
+    return fetchSave();
   }
 
   function toast(text, seconds = 3) {
@@ -207,7 +209,7 @@ export function createWorld(random) {
     if (state.toasts.length > 3) state.toasts.shift();
   }
 
-  function addParticles(x, y, color, count, speed) {
+  function burst(x, y, color, count, speed) {
     for (let i = 0; i < count; i += 1) {
       const angle = random() * Math.PI * 2;
       const v = speed * (0.4 + random() * 0.8);
@@ -216,7 +218,7 @@ export function createWorld(random) {
     if (state.particles.length > 240) state.particles.splice(0, state.particles.length - 240);
   }
 
-  function nearestCar(maxDist) {
+  function closestCar(maxDist) {
     let best = null;
     let bestD = maxDist;
     for (const car of state.cars) {
@@ -230,7 +232,7 @@ export function createWorld(random) {
     return best;
   }
 
-  function enterCar(car, events) {
+  function takeCar(car, events) {
     const wasTraffic = car.kind === 'traffic';
     if (wasTraffic) {
       // The driver bails and runs.
@@ -242,7 +244,7 @@ export function createWorld(random) {
       driver.fleeY = 0.7;
       driver.fleeTime = 3;
       state.peds.push(driver);
-      addWanted(WANTED.stealCar);
+      raiseWanted(WANTED.stealCar);
       state.stats.carsStolen += 1;
       events.push({ kind: 'steal' });
     }
@@ -254,7 +256,7 @@ export function createWorld(random) {
     state.player.y = car.y;
   }
 
-  function exitCar() {
+  function leaveCar() {
     const car = state.player.car;
     if (!car) return;
     car.speed = 0;
@@ -270,7 +272,7 @@ export function createWorld(random) {
     state.player.y = body.y;
   }
 
-  function damagePlayer(amount, events) {
+  function hurtPlayer(amount, events) {
     if (state.player.invulnerable > 0) return;
     state.player.health -= amount;
     state.player.lastDamage = state.time;
@@ -282,7 +284,7 @@ export function createWorld(random) {
     }
   }
 
-  function handleWasted(events) {
+  function onWasted(events) {
     const lost = Math.floor(state.player.money * 0.1);
     state.player.money -= lost;
     state.player.health = PLAYER.health;
@@ -296,7 +298,7 @@ export function createWorld(random) {
     state.banner = { title: 'WASTED', sub: `You lost $${lost}.`, time: 3 };
   }
 
-  function handleBusted(events) {
+  function onBusted(events) {
     const lost = Math.floor(state.player.money * 0.2);
     state.player.money -= lost;
     state.player.health = Math.max(50, state.player.health);
@@ -309,7 +311,7 @@ export function createWorld(random) {
     state.banner = { title: 'BUSTED', sub: `You lost $${lost}.`, time: 3 };
   }
 
-  function stepPlayerOnFoot(dt, input, events) {
+  function stepOnFoot(dt, input, events) {
     const player = state.player;
     let mx = input.moveX;
     let my = input.moveY;
@@ -340,7 +342,7 @@ export function createWorld(random) {
         events.push({ kind: 'punch' });
         for (const ped of hitPeds) {
           if (ped.down) {
-            addWanted(WANTED.hitPed);
+            raiseWanted(WANTED.hitPed);
             scareNearby(state.peds, ped.x, ped.y, 220);
           }
         }
@@ -366,12 +368,12 @@ export function createWorld(random) {
         const gy = player.y + Math.sin(player.aimAngle) * 20;
         if (shotgun) fireShotgun(state.bullets, gx, gy, player.aimAngle, 'player');
         else fireBullet(state.bullets, gx, gy, player.aimAngle, 'player', PLAYER.pistolDamage);
-        addParticles(gx, gy, '#ffd76a', 4, 120);
+        burst(gx, gy, '#ffd76a', 4, 120);
         events.push({ kind: shotgun ? 'shotgun' : 'shot' });
         const copNear = state.cops.some((cop) => Math.hypot(cop.x - player.x, cop.y - player.y) < 600);
         if (copNear && state.time - player.lastShootCrime > 10) {
           player.lastShootCrime = state.time;
-          addWanted(WANTED.shoot);
+          raiseWanted(WANTED.shoot);
         }
         scareNearby(state.peds, player.x, player.y, 260);
       }
@@ -387,8 +389,8 @@ export function createWorld(random) {
           events.push({ kind: 'safehouse' });
         }
       }
-      const car = nearestCar(64);
-      if (car) enterCar(car, events);
+      const car = closestCar(64);
+      if (car) takeCar(car, events);
     }
     // Health comes back slowly when nothing has hurt the player for a while.
     if (state.time - player.lastDamage > 8 && player.health > 0 && player.health < PLAYER.health) {
@@ -396,7 +398,7 @@ export function createWorld(random) {
     }
   }
 
-  function stepPlayerInCar(dt, input, events) {
+  function stepInCar(dt, input, events) {
     const player = state.player;
     const car = player.car;
     const speed = drivePlayerCar(car, input.steer, input.throttle, input.brake, dt);
@@ -432,8 +434,8 @@ export function createWorld(random) {
       car.vx *= 0.6;
       car.vy *= 0.6;
     }
-    if (crashed && state.time - (stepPlayerInCar.lastCrash || -999) > 0.7) {
-      stepPlayerInCar.lastCrash = state.time;
+    if (crashed && state.time - (stepInCar.lastCrash || -999) > 0.7) {
+      stepInCar.lastCrash = state.time;
       events.push({ kind: 'crash' });
       scareNearby(state.peds, car.x, car.y, 200);
     }
@@ -455,8 +457,8 @@ export function createWorld(random) {
               other.x += nx * push;
               other.y += ny * push;
             }
-            if (speed > 240 && state.time - (stepPlayerInCar.lastCrash || -999) > 0.7) {
-              stepPlayerInCar.lastCrash = state.time;
+            if (speed > 240 && state.time - (stepInCar.lastCrash || -999) > 0.7) {
+              stepInCar.lastCrash = state.time;
               damageCar(car, 8);
               damageCar(other, 12);
               events.push({ kind: 'crash' });
@@ -474,7 +476,7 @@ export function createWorld(random) {
           ped.downTime = 8;
           if (state.time - player.lastPedCrime > 3) {
             player.lastPedCrime = state.time;
-            addWanted(WANTED.hitPed);
+            raiseWanted(WANTED.hitPed);
           }
           scareNearby(state.peds, ped.x, ped.y, 260);
           events.push({ kind: 'ped-down' });
@@ -485,10 +487,10 @@ export function createWorld(random) {
     }
     if (car.wrecked) {
       events.push({ kind: 'car-wrecked' });
-      exitCar();
-      addParticles(car.x, car.y, '#555', 16, 90);
+      leaveCar();
+      burst(car.x, car.y, '#555', 16, 90);
     }
-    if (input.interact) exitCar();
+    if (input.interact) leaveCar();
     if (input.horn) events.push({ kind: 'horn' });
     if (speed > 60) {
       if (random() < 0.3) {
@@ -538,20 +540,20 @@ export function createWorld(random) {
       events.push({ kind: 'roadblock' });
       toast('Roadblock ahead — smash through or steer around it.', 3);
     }
-    if (player.car) stepPlayerInCar(dt, input, events);
-    else stepPlayerOnFoot(dt, input, events);
+    if (player.car) stepInCar(dt, input, events);
+    else stepOnFoot(dt, input, events);
     updateTraffic(city, state.cars, dt, random);
     updatePedestrians(state.peds, city, dt);
     const policeResult = updatePolice(city, state.cops, player, player.car, dt);
     if (policeResult === 'busted') {
-      handleBusted(events);
+      onBusted(events);
       events.push({ kind: 'busted' });
     } else if (policeResult && policeResult.type === 'ram') {
       state.shake = Math.max(state.shake, 5);
       events.push({ kind: 'ram', damage: policeResult.damage });
       if (player.car && player.car.wrecked) {
         events.push({ kind: 'car-wrecked' });
-        exitCar();
+        leaveCar();
       }
     }
     // A wrecked cop car loses its cop: the officer bails and the heat jumps.
@@ -566,12 +568,12 @@ export function createWorld(random) {
         officer.fleeY = -0.7;
         officer.fleeTime = 3;
         state.peds.push(officer);
-        addWanted(WANTED.killCop);
+        raiseWanted(WANTED.killCop);
         state.cops.splice(i, 1);
         events.push({ kind: 'cop-down' });
       }
     }
-    updateEnemies(state.enemies, player, city, state.bullets, dt, random, (damage) => damagePlayer(damage, events));
+    updateEnemies(state.enemies, player, city, state.bullets, dt, random, (damage) => hurtPlayer(damage, events));
     // A Viper's punch hurts the player straight through punch(): if it put their health
     // to zero, that is a wasted run, and the world has to say so.
     if (player.health <= 0 && !events.some((e) => e.kind === 'wasted')) {
@@ -581,20 +583,20 @@ export function createWorld(random) {
     const bulletEvents = updateBullets(state.bullets, city, state.cars, state.peds, state.enemies, player, dt);
     for (const be of bulletEvents) {
       if (be.kind === 'hit-player') {
-        damagePlayer(be.damage, events);
+        hurtPlayer(be.damage, events);
         events.push({ kind: 'player-hit' });
       } else if (be.kind === 'hit-ped') {
-        addWanted(WANTED.hitPed);
+        raiseWanted(WANTED.hitPed);
         scareNearby(state.peds, be.x, be.y, 220);
         events.push({ kind: 'ped-down' });
       } else if (be.kind === 'spark') {
-        addParticles(be.x, be.y, '#ffd76a', 5, 140);
+        burst(be.x, be.y, '#ffd76a', 5, 140);
       } else if (be.kind === 'enemy-down') {
-        addParticles(be.enemy.x, be.enemy.y, '#7a3fd1', 10, 120);
+        burst(be.enemy.x, be.enemy.y, '#7a3fd1', 10, 120);
         events.push({ kind: 'enemy-down' });
       }
     }
-    if (events.some((e) => e.kind === 'wasted')) handleWasted(events);
+    if (events.some((e) => e.kind === 'wasted')) onWasted(events);
     // Pickups: walk over one to take it.
     for (const pickup of state.pickups) {
       if (pickup.taken) {
