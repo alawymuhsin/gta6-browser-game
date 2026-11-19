@@ -1,259 +1,212 @@
-// The loop: title screen, play, pause, and the staged screenshots. The world runs on a
-// fixed step (sixty a second) no matter the display's rate, so the game plays the same on
-// every machine; the renderer draws whatever the world holds after the steps. Sound comes
-// from the world's events — a shot, a payout, a bust — plus the continuous voices (engine,
-// siren, rotor, music) the loop drives every frame. Progress saves itself every ten
-// seconds of play and on the pause screen's S; the title screen offers the save back.
+// The loop: title screen, play, pause, and the staged screenshots. The world runs
+// on a fixed 60 Hz step whatever the display's rate; the renderer paints the state
+// each frame. Sound is all synthesised, and every one-shot key press is taken once
+// from the input, so a held key never double-fires.
 
 import { BEST_KEY, SAVE_KEY, STEP } from './config.js';
 import { createWorld } from './world.js';
+import { objectiveText } from './missions.js';
 import { createRenderer, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, ACTION_RADIO, createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { stageShot } from './shots.js';
 
+const params = new URLSearchParams(window.location.search);
 const canvas = document.getElementById('game');
+const statusLine = document.getElementById('status');
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
 const audio = createAudio();
-const params = new URLSearchParams(location.search);
-const world = createWorld(Number(params.get('seed')) || 11);
 
+const seed = Number(params.get('seed')) || 11;
+const world = createWorld(seed);
 let screen = SCREEN_TITLE;
-let best = loadBest();
-let saveExists = hasSave();
-let acc = 0;
-let last = performance.now();
-let saveTimer = 0;
-let newGamePressed = false;
-let sArmed = true;
-
-// N is not one of the input module's keys, so the loop watches for it itself: a new
-// game from the title screen.
-window.addEventListener('keydown', (event) => {
-  if (!event.repeat && event.code === 'KeyN') newGamePressed = true;
-});
-
-// ------------------------------------------------------------------ save and best
-
-function hasSave() {
-  try {
-    return localStorage.getItem(SAVE_KEY) !== null;
-  } catch {
-    return false;
-  }
+let best = 0;
+let saveExists = false;
+try {
+  best = Number(window.localStorage.getItem(BEST_KEY)) || 0;
+  saveExists = !!window.localStorage.getItem(SAVE_KEY);
+} catch {
+  // Private mode: play without saving.
 }
+if (params.has('debug')) window.__game = world;
 
-function loadBest() {
+function loadSave() {
   try {
-    return Number(localStorage.getItem(BEST_KEY)) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function storeBest(value) {
-  if (value <= best) return;
-  best = value;
-  try {
-    localStorage.setItem(BEST_KEY, String(best));
-  } catch {
-    /* private mode: the best take just lives for the session */
-  }
-}
-
-function saveGame() {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(world.serialize()));
-    saveExists = true;
-  } catch {
-    /* private mode: nothing is kept */
-  }
-}
-
-function loadGame() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) return false;
-    world.deserialize(JSON.parse(raw));
+    world.load(raw);
     return true;
   } catch {
     return false;
   }
 }
 
-function clearSave() {
+function saveGame() {
   try {
-    localStorage.removeItem(SAVE_KEY);
+    window.localStorage.setItem(SAVE_KEY, world.save());
+    saveExists = true;
   } catch {
-    /* private mode: nothing was kept */
+    // Ignore: the game keeps running without a save.
   }
-  saveExists = false;
-}
-
-// ------------------------------------------------------------------ sound
-
-/** One world event, one sound. */
-function playEvent(ev) {
-  switch (ev.kind) {
-    case 'shot':
-      if (ev.weapon === 'shotgun') audio.shotgun();
-      else audio.gunshot();
-      break;
-    case 'punch':
-      audio.punch();
-      break;
-    case 'pickup':
-    case 'collectible':
-      audio.pickup();
-      break;
-    case 'mission-complete':
-    case 'race-won':
-      audio.cash();
-      audio.jingle();
-      break;
-    case 'delivery-done':
-    case 'fare-done':
-      audio.cash();
-      break;
-    case 'race-checkpoint':
-    case 'delivery-picked':
-    case 'fare-picked':
-      audio.click();
-      break;
-    case 'busted':
-      audio.bust();
-      break;
-    case 'wasted':
-      audio.wasted();
-      break;
-    case 'ram':
-    case 'car-wrecked':
-      audio.crash();
-      break;
-    case 'horn':
-      audio.horn();
-      break;
-    default:
-      break;
-  }
-}
-
-// ------------------------------------------------------------------ screens
-
-/** Start from the title: continue the save, or a new game on N. */
-function startGame(fresh) {
-  audio.ensure();
-  audio.click();
-  if (fresh) {
-    clearSave();
-    world.reset();
-  } else if (saveExists) {
-    loadGame();
-  }
-  screen = SCREEN_PLAY;
-  saveTimer = 0;
-}
-
-/** One pressed action, on the screen it belongs to. */
-function handleAction(action) {
-  if (action === ACTION_MUTE) {
-    audio.setMuted(!audio.isMuted());
-    return;
-  }
-  if (action === ACTION_RADIO) {
-    audio.nextStation();
-    return;
-  }
-  if (screen === SCREEN_TITLE) {
-    if (action === ACTION_CONFIRM) startGame(false);
-  } else if (screen === SCREEN_PLAY) {
-    if (action === ACTION_PAUSE) {
-      audio.click();
-      screen = SCREEN_PAUSED;
-      sArmed = false;
+  const earned = world.state.stats.earned;
+  if (earned > best) {
+    best = earned;
+    try {
+      window.localStorage.setItem(BEST_KEY, String(best));
+    } catch {
+      // Ignore.
     }
-  } else if (screen === SCREEN_PAUSED) {
-    if (action === ACTION_PAUSE || action === ACTION_CONFIRM) {
+  }
+}
+
+function playEventSounds(events) {
+  for (const ev of events) {
+    switch (ev.kind) {
+      case 'shot':
+        if (ev.weapon === 'shotgun') audio.shotgun();
+        else audio.gunshot();
+        break;
+      case 'punch':
+        audio.punch();
+        break;
+      case 'crash':
+      case 'ram':
+        audio.crash();
+        break;
+      case 'horn':
+        audio.horn();
+        break;
+      case 'pickup':
+        audio.pickup();
+        break;
+      case 'mission-done':
+      case 'race-won':
+        audio.jingle();
+        audio.cash();
+        break;
+      case 'delivery-done':
+      case 'fare-done':
+      case 'collectible':
+        audio.cash();
+        break;
+      case 'busted':
+        audio.bust();
+        break;
+      case 'wasted':
+        audio.wasted();
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+/** The one-shot keys, taken once: confirm, pause, mute, radio. */
+function takeActions() {
+  const flags = input.takeActions();
+  return {
+    confirm: (flags & ACTION_CONFIRM) !== 0,
+    pause: (flags & ACTION_PAUSE) !== 0,
+    mute: (flags & ACTION_MUTE) !== 0,
+    radio: (flags & ACTION_RADIO) !== 0,
+  };
+}
+
+function tick(dt) {
+  const state = world.state;
+  const snap = input.snapshot(
+    (sx, sy) => renderer.screenToWorld(sx, sy, state.camera),
+    !!state.player.car,
+  );
+  const acts = takeActions();
+  if (acts.mute) audio.setMuted(!audio.isMuted());
+
+  if (screen === SCREEN_TITLE) {
+    // The city lives behind the panel: traffic, peds and the clock keep moving.
+    world.step(dt, {
+      moveX: 0, moveY: 0, run: false, steer: 0, throttle: 0, brake: 0,
+      interact: false, interactHeld: false, punch: false, shoot: false,
+      horn: false, weapon: false, aimX: state.player.x, aimY: state.player.y,
+    });
+    if (acts.confirm) {
+      audio.ensure();
       audio.click();
+      if (saveExists) loadSave();
+      else world.beginStory();
+      screen = SCREEN_PLAY;
+    } else if (input.isKeyDown('KeyN')) {
+      audio.ensure();
+      audio.click();
+      world.reset();
+      world.beginStory();
       screen = SCREEN_PLAY;
     }
+    return;
   }
-}
 
-// ------------------------------------------------------------------ the frame
-
-function frame(now) {
-  requestAnimationFrame(frame);
-  const dt = Math.min(0.1, (now - last) / 1000);
-  last = now;
-  const state = world.state;
-  if (screen === SCREEN_PLAY) {
-    acc += dt;
-    const snap = input.snapshot((sx, sy) => renderer.screenToWorld(sx, sy, state.camera), !!state.player.car);
-    let steps = 0;
-    while (acc >= STEP && steps < 5) {
-      const events = world.step(STEP, snap);
-      for (const ev of events) playEvent(ev);
-      acc -= STEP;
-      steps++;
-    }
-    if (steps === 5) acc = 0;
-    audio.setRadioInCar(!!state.player.car);
-    audio.engine(state.player.car ? Math.min(1, state.player.car.speed / 420) : 0);
-    audio.siren(state.cops.length > 0);
-    audio.rotor(!!state.heli);
-    storeBest(state.stats.earned);
-    saveTimer += dt;
-    if (saveTimer > 10) {
-      saveTimer = 0;
-      saveGame();
-    }
-  } else {
-    audio.engine(0);
-    audio.siren(false);
-    audio.rotor(false);
-  }
-  audio.music(dt);
-  const _takenActions = input.takeActions();
-  for (const action of [ACTION_CONFIRM, ACTION_PAUSE, ACTION_MUTE, ACTION_RADIO].filter((a) => _takenActions & a)) handleAction(action);
-  if (screen === SCREEN_TITLE && newGamePressed) {
-    newGamePressed = false;
-    startGame(true);
-  }
   if (screen === SCREEN_PAUSED) {
-    if (!input.isKeyDown('KeyS')) sArmed = true;
-    else if (sArmed) {
-      sArmed = false;
+    if (acts.pause) screen = SCREEN_PLAY;
+    else if (input.isKeyDown('KeyS')) {
       saveGame();
-      audio.click();
       screen = SCREEN_TITLE;
     }
+    return;
   }
-  renderer.draw(state, screen, {
-    radio: audio.radioName(!!state.player.car),
-    saveExists,
-    best,
-  });
-}
 
-// ------------------------------------------------------------------ start
+  // Playing.
+  if (acts.radio) {
+    const name = audio.nextStation();
+    state.toasts.push({ text: name === 'Radio off' ? 'Radio off' : `♪ ${name}`, time: 2 });
+  }
+  const events = world.step(dt, snap);
+  for (const ev of events) {
+    if (ev.kind === 'save') saveGame();
+  }
+  playEventSounds(events);
+  audio.engine(state.player.car ? Math.min(1, state.player.car.speed / 420) : 0);
+  audio.siren(state.cops.length > 0);
+  audio.rotor(!!state.heli);
+  audio.setRadioInCar(!!state.player.car);
+  audio.music(dt);
+  if (acts.pause) {
+    saveGame();
+    screen = SCREEN_PAUSED;
+  }
+  const objective = objectiveText(state.missions, state.race);
+  if (statusLine && statusLine.textContent !== objective) statusLine.textContent = objective;
+}
 
 const shotName = params.get('shot');
 if (shotName) {
-  // A staged screenshot: set the scene, draw it once, and say so.
+  // A staged screenshot: set the scene, draw it twice, and say so.
   const staged = stageShot(shotName, world);
-  renderer.draw(world.state, staged.screen, { radio: null, saveExists: false, best: 0 });
+  const extras = { radio: null, saveExists: false, best: staged.best };
+  renderer.draw(world.state, staged.screen, extras);
+  renderer.draw(world.state, staged.screen, extras);
   window.__shotReady = true;
   window.__shotDebug = { screen: staged.screen, best: staged.best };
 } else {
-  if (params.has('debug')) {
-    window.__game = {
-      get state() {
-        return world.state;
-      },
-      world,
-    };
-  }
+  let last = performance.now();
+  let acc = 0;
+  const frame = (now) => {
+    requestAnimationFrame(frame);
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.25) dt = 0.25;
+    acc += dt;
+    let guard = 0;
+    while (acc >= STEP && guard < 8) {
+      acc -= STEP;
+      guard += 1;
+      tick(STEP);
+    }
+    if (acc > STEP) acc = 0;
+    renderer.draw(world.state, screen, {
+      radio: audio.radioName(!!world.state.player.car),
+      saveExists,
+      best,
+    });
+  };
   requestAnimationFrame(frame);
 }
