@@ -1,4 +1,5 @@
 // main.js — titik masuk Solara Bay: memasang canvas, input, audio, dan dunia,
+// Round 5: the staged-shot mode marks window.__shotReady when the frame is ready for Playwright.
 // lalu menjalankan loop permainan. Dua mode: mode biasa (title → play → pause,
 // dengan save/load di localStorage) dan mode staged shot (?shot=cover|street|
 // drive|mission) yang memainkan satu scene dari seed tetap, menggambarnya, dan

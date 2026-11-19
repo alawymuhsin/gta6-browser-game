@@ -1,4 +1,5 @@
 // One tiny seeded generator (mulberry32). Feed it a seed and it deals the same
+// Round 5: mulberry32 is the whole generator — small, seeded, and deterministic.
 // city, the same traffic and the same staged frames every time, so any scene
 // can be replayed exactly from its seed alone.
 

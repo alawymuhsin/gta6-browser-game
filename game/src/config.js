@@ -1,4 +1,5 @@
 // Every tuning number and colour for Solara Bay lives in this one file. The
+// Round 5: all tuning lives here, so the dossier's source outline stays stable.
 // world is a square city measured in world units; the camera shows a 1280x720
 // slice of it and follows the player wherever they go.
 

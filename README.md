@@ -44,6 +44,8 @@ node serve.ts
 # open http://localhost:8080
 ```
 
+The entrypoint `node main.ts` resolves game/ and screenshots/ from its own folder, so it builds the dossier correctly from any working directory.
+
 `game/index.html` and its ES modules are the whole game — no library, no assets fetched over the network, all sound synthesised in WebAudio.
 
 ## For the judge

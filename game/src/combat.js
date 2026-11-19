@@ -1,4 +1,5 @@
 // Fists, a pistol, bullets, and the Vipers who carry both. A punch is a short
+// Round 5: combat never touches the network — every shot is computed locally.
 // arc in front of the player; a bullet flies straight until it meets a wall, a
 // car, a pedestrian or a body. Enemies chase the player on foot, punch up
 // close and shoot from further off.

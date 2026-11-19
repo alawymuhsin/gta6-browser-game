@@ -4,3 +4,4 @@ node_modules/
 *.log
 .DS_Store
 out-*/
+# Screenshots are tracked on purpose: the staged frames are part of the entry.

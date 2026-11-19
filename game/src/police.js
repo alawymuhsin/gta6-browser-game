@@ -1,4 +1,5 @@
 // The police: cars that spawn when the wanted level rises, chase the player
+// Round 5: the helicopter's searchlight is the four-star answer to a getaway.
 // through the streets, ram a getaway car, and bust a player on foot who lets
 // one pull up beside them. They drive straight at the player and slide along
 // walls instead of following roads, which is what makes a chase feel like a

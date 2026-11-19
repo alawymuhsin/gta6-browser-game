@@ -4,6 +4,7 @@
 // look at the scenes without opening the game. It sends the MIME types a browser
 // game needs, refuses any path outside the served folders, and otherwise does
 // nothing clever: a development convenience, not a web server for the internet.
+// (Round 5: main.ts now resolves its paths the same way this file does — from import.meta.url.)
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';

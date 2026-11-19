@@ -1,4 +1,5 @@
 // world.js — simulasi Solara Bay: satu dunia yang berisi pemain, mobil, pejalan
+// Round 5: one fixed 1/60s step keeps the simulation deterministic across runs.
 // kaki, musuh, polisi, helikopter, balapan, delivery, dan sepuluh misi cerita.
 // createWorld(seed) membangun keadaan awal yang deterministik; step(dt, input)
 // memajukan satu langkah tetap (1/60 detik). File ini yang mengikat semua modul

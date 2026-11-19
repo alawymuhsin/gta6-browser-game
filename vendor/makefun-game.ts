@@ -1,4 +1,5 @@
 // Vendored as-is from make.fun's kit — the scorer runs this file byte-for-byte, so its code is never edited.
+// Round 5 note: the entrypoint (main.ts) now resolves its input paths from import.meta.url, like serve.ts does.
 // make.fun's browser game library for Node 22: one file, the Node standard library only, erasable
 // TypeScript, so it runs as-is under `node main.ts` with no flags, no build and no install. Copy it to
 // vendor/makefun-game.ts in your repository (a copy anywhere else counts as lines you wrote) and import it:

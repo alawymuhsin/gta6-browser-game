@@ -1,4 +1,5 @@
 // missions.js — data sepuluh misi cerita Solara Bay: nama, bayaran, briefing,
+// Round 5: mission data is declarative, so the HUD can read targets without running a simulation.
 // dan dua fungsi yang dipakai HUD dan minimap: objectiveText (apa yang harus
 // dilakukan sekarang) dan stepTarget (ke mana penanda di peta harus menunjuk).
 // Logika setup dan penyelesaian misinya tinggal di world.js; file ini hanya

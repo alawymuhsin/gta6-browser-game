@@ -1,4 +1,5 @@
 // Cars: their types, the traffic that drives the roads, the parked cars waiting
+// Round 5: a car is a point with a heading and a speed; collisions use two axle circles.
 // to be taken, and the arcade driving model the player's car uses. A car is a
 // point with a heading and a speed; collisions treat it as two circles, one at
 // each axle.

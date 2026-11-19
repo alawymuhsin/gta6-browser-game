@@ -1,4 +1,5 @@
 // Drawing only: the world's state and the current screen go in, pixels come
+// Round 5: the renderer only paints; it never changes the world it draws.
 // out. The camera shows a 1280x720 slice of the city and follows the player,
 // zooming out a little in a car. The HUD, the minimap and the menus are drawn
 // in screen space after the world. Nothing here changes the game: it only

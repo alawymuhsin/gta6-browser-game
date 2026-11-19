@@ -1,4 +1,5 @@
 // city.js — peta Solara Bay: jaringan jalan, delapan distrik, sebelas landmark,
+// Round 5: the seeded city builder means the same seed always deals the same map.
 // gedung dan taman, plus semua helper yang dipakai modul lain untuk tetap berada
 // di jalan dan keluar dari tembok. Semua yang acak di sini didealt dari satu
 // generator ber-seed, jadi seed yang sama selalu membangun kota yang sama.

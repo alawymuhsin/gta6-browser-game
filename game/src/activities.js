@@ -1,4 +1,5 @@
 // The work that never ends, after the story: street races against the clock,
+// Round 5: staged shots replay these activities from a fixed seed, so the frames are reproducible.
 // package deliveries for cash, and twelve hidden packages stashed around the
 // city. A race is a list of checkpoints to drive through in order before the
 // timer runs out; a delivery is a pickup and a drop-off with a price on it;

@@ -1,4 +1,5 @@
 // Keyboard and mouse input. Held keys give movement and driving; one-shot
+// Round 5: one-shot presses are queued as flags, so a press between frames is never lost.
 // presses (enter a car, punch, pause, mute) are queued as flags and taken once
 // by the loop, so a press between two frames is never lost and never counted
 // twice. The mouse aims the pistol: the loop turns its screen position into a

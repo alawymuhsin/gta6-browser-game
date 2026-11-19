@@ -1,4 +1,5 @@
 // All sound is synthesised in WebAudio: no audio files, no network, nothing
+// Round 5: the radio stations are pure synth, so the dossier never needs an audio asset.
 // to load. The engine and the siren are loops whose pitch follows the game;
 // everything else is a one-shot. Nothing plays until the player first presses
 // a key or clicks, which is when the browser allows an AudioContext to start.

@@ -1,4 +1,5 @@
 // The city's foot traffic. Pedestrians walk the sidewalks, turn at corners,
+// Round 5: pedestrians run from gunfire, which is what makes the street feel alive.
 // and run from gunfire, speeding cars and bodies on the ground. A pedestrian
 // has no name and no destination that matters; what matters is that the
 // street feels alive.
