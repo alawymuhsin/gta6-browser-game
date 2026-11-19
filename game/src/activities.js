@@ -1,9 +1,10 @@
-// The repeatable work after the story: street races against the clock, package
-// deliveries for cash, and twelve hidden packages stashed around the city. A race is a
-// list of checkpoints the player must drive through in order before the timer runs out;
-// a delivery is a pickup and a drop-off with a price on it; a hidden package pays out
-// once, and all twelve together pay a bonus. None of this touches the story missions:
-// missions.js runs the story, this file runs the work that never ends.
+// The work that never ends, after the story: street races against the clock,
+// package deliveries for cash, and twelve hidden packages stashed around the
+// city. A race is a list of checkpoints to drive through in order before the
+// timer runs out; a delivery is a pickup and a drop-off with a price on it;
+// a hidden package pays out once, and all twelve together pay a bonus. None
+// of this touches the story missions: missions.js runs the story, this file
+// runs the jobs that keep coming.
 
 import { COLLECTIBLES, RACE } from './config.js';
 import { collectibleSpots, landmark } from './city.js';

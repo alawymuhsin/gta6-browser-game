@@ -1,3 +1,4 @@
+# Build output, dependencies, logs, and OS files stay out of the repo.
 out/
 node_modules/
 *.log

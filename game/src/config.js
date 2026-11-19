@@ -1,5 +1,6 @@
-// Every tuning number and colour for Solara Bay in one place. The world is a square city
-// measured in world units; the camera shows a 1280x720 slice of it and follows the player.
+// Every tuning number and colour for Solara Bay lives in this one file. The
+// world is a square city measured in world units; the camera shows a 1280x720
+// slice of it and follows the player wherever they go.
 
 /** The city is this many world units across, and the roads sit on a regular grid inside it. */
 export const WORLD = { size: 4096, roadPitch: 512, roadWidth: 72, sidewalk: 14 };

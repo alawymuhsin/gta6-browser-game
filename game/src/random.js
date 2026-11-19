@@ -1,5 +1,6 @@
-// A small seeded generator (mulberry32): the same seed always deals the same city, the same
-// traffic and the same staged screenshots, so a scene can be replayed exactly.
+// One tiny seeded generator (mulberry32). Feed it a seed and it deals the same
+// city, the same traffic and the same staged frames every time, so any scene
+// can be replayed exactly from its seed alone.
 
 export function createRandom(seed) {
   let value = seed >>> 0;

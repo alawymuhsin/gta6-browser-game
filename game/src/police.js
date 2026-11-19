@@ -1,8 +1,9 @@
-// The police: cars that spawn when the wanted level rises, chase the player through the
-// streets, ram a getaway car, and bust a player on foot who lets one pull up beside them.
-// They drive straight at the player and slide along walls instead of following roads, which
-// is what makes a chase feel like a chase. At four stars the helicopter comes up and watches
-// from above; at three stars a roadblock goes down on the road ahead of the player.
+// The police: cars that spawn when the wanted level rises, chase the player
+// through the streets, ram a getaway car, and bust a player on foot who lets
+// one pull up beside them. They drive straight at the player and slide along
+// walls instead of following roads, which is what makes a chase feel like a
+// chase. At four stars the helicopter comes up and watches from above; at
+// three stars a roadblock goes down on the road ahead of the player.
 
 import { HELI, POLICE, ROADBLOCK, WANTED } from './config.js';
 import { createCar, carAxles, damageCar } from './vehicles.js';

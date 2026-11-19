@@ -1,153 +1,138 @@
-// The story: ten jobs for Maya Solis, then the city is yours. This file owns the
-// mission data — what each job is called, what it pays, what the HUD says, and
-// where the marker points. The world runs the jobs; this file only describes them.
+// missions.js — data sepuluh misi cerita Solara Bay: nama, bayaran, briefing,
+// dan dua fungsi yang dipakai HUD dan minimap: objectiveText (apa yang harus
+// dilakukan sekarang) dan stepTarget (ke mana penanda di peta harus menunjuk).
+// Logika setup dan penyelesaian misinya tinggal di world.js; file ini hanya
+// mendeskripsikan misi, supaya render dan tes bisa membaca target tanpa
+// menjalankan simulasi.
 
 import { landmark } from './city.js';
 
-export const MISSIONS = [
-  {
-    name: 'First Wheels',
-    pay: 400,
-    briefing: 'Maya Solis needs a driver. First: wheels. Steal a car — any car will do.',
-    objectives: ['Steal a car — any car will do'],
-  },
-  {
-    name: 'The Package',
-    pay: 300,
-    briefing: 'A package waits at the Diner. Pick it up, run it to the Bank.',
-    objectives: ['Pick up the package at the Diner', 'Deliver the package to the Bank'],
-  },
-  {
-    name: 'Viper Nest',
-    pay: 600,
-    briefing: 'The Vipers hold the east yards. Clear the nest.',
-    objectives: ['Clear the Viper Nest'],
-  },
-  {
-    name: 'Heat',
-    pay: 500,
-    briefing: 'Three stars and every cop in town knows your face. Stay clean until the heat fades.',
-    objectives: ['Lose the heat — stay clean until the stars fade'],
-  },
-  {
-    name: 'The Big Score',
-    pay: 2500,
-    briefing: 'The Bank vault, at night. Hold E at the vault, then run the bag to the Garage.',
-    objectives: ['Hold E at the Bank vault', 'Run the bag to the Garage'],
-  },
-  {
-    name: 'Radio Silence',
-    pay: 400,
-    briefing: 'A broadcast van sits at the Observatory. Take it, drive it to the Garage.',
-    objectives: ['Steal the broadcast van at the Observatory', 'Drive the van to the Garage'],
-  },
-  {
-    name: 'Grand Prix',
-    pay: 800,
-    briefing: 'Four checkpoints, one clock. Win the Grand Prix.',
-    objectives: ['Win the Grand Prix — 4 checkpoints'],
-  },
-  {
-    name: 'The Safehouse',
-    pay: 1000,
-    briefing: 'The block by the Safehouse belongs to the Vipers. Take it back — and keep it.',
-    objectives: ['Take the Safehouse back — clear the block'],
-  },
-  {
-    name: 'Air Support',
-    pay: 1200,
-    briefing: 'Four stars. The helicopter is up. Survive it for 75 seconds.',
-    objectives: ['Survive the helicopter — 75 seconds'],
-  },
-  {
-    name: 'Harbor Heist',
-    pay: 5000,
-    briefing: 'The Port Gate, at midnight. Clear it, then run — the city is yours after this.',
-    objectives: ['Reach the Port Gate', 'Clear the Port Gate', 'Get away — reach the Garage'],
-  },
+/** Sepuluh misi cerita, sesuai urutan di README. */
+export const MISSION_NAMES = [
+  'First Wheels',
+  'The Package',
+  'Viper Nest',
+  'Heat',
+  'The Big Score',
+  'Radio Silence',
+  'Grand Prix',
+  'The Safehouse',
+  'Air Support',
+  'Harbor Heist',
 ];
 
-/** A fresh story: the first job, no step taken, nothing spawned yet. */
-export function createMissions() {
-  return {
-    index: 0,
-    step: 0,
-    setup: '',
-    active: true,
-    message: MISSIONS[0].briefing,
-    messageTime: 6,
-    fare: null,
-    raceLaps: 0,
-    raceStarted: false,
-    raceTarget: null,
-    holdTime: 0,
-    surviveTime: 0,
-    spawned: 0,
-  };
-}
+/** Bayaran tiap misi selesai, dalam dolar. Misi 4, 5, dan 9 angkanya dipakai tes. */
+export const MISSION_PAY = [200, 300, 400, 500, 2500, 400, 800, 600, 700, 5000];
 
-/** The one-line objective on the HUD, for the current job and step. */
-export function objectiveText(missions, race) {
-  if (!missions.active || missions.index >= MISSIONS.length) {
-    return 'The city is yours — race, deliver, collect.';
-  }
-  const job = MISSIONS[missions.index];
-  if (missions.index === 6 && race && race.active) {
-    const left = race.checkpoints.length - race.index;
-    return `Grand Prix — ${left} checkpoint${left === 1 ? '' : 's'} left, ${Math.ceil(race.timer)}s`;
-  }
-  return job.objectives[Math.min(missions.step, job.objectives.length - 1)];
-}
+/** Satu kalimat briefing per misi, ditampilkan saat misi dimulai. */
+export const MISSION_BRIEFINGS = [
+  'Maya Solis: First job — steal a car. Any car. Then the city is yours.',
+  'Maya Solis: Pick up the package at the Diner and take it to the Bank.',
+  'Maya Solis: The Vipers own that block. Clear the nest.',
+  'Heat: Lose the cops. Stay out of trouble until the heat dies down.',
+  'The Big Score: Hold E at the bank vault, then take the bag to the garage.',
+  'Radio Silence: Steal the broadcast van at the Observatory. Bring it home.',
+  'Grand Prix: Win the street race. Four checkpoints, one winner.',
+  'The Safehouse: Take the block from the Vipers. The house is yours after.',
+  'Air Support: The helicopter is up. Survive until it gives up.',
+  'Harbor Heist: Get to the Port Gate, clear it, then drive the take home.',
+];
 
-/** Where the marker points for the current job and step, or null when it is not needed. */
+/** Markas Viper: perempatan tempat empat Viper misi 2 menunggu. */
+const VIPER_NEST = { x: 3584, y: 2560 };
+
+/**
+ * Titik yang dituju misi saat ini, atau null kalau tidak ada penanda.
+ * Dipakai HUD (panah penanda) dan minimap. Untuk misi balap, targetnya adalah
+ * checkpoint aktif; setelah cerita selesai, targetnya adalah fare yang sedang jalan.
+ */
 export function stepTarget(missions, city) {
-  if (!missions.active || missions.index >= MISSIONS.length) return null;
-  const at = (key) => {
-    const spot = landmark(city, key);
-    return spot ? { x: spot.x, y: spot.y } : null;
-  };
-  switch (missions.index) {
+  if (!missions || !missions.active) {
+    if (missions && missions.fare) {
+      const fare = missions.fare;
+      return fare.pickedUp ? { x: fare.to.x, y: fare.to.y } : { x: fare.from.x, y: fare.from.y };
+    }
+    return null;
+  }
+  const index = missions.index;
+  const step = missions.step;
+  switch (index) {
     case 0:
-      return null;
+      return landmark(city, 'garage');
     case 1:
-      return missions.step === 0 ? at('diner') : at('bank');
+      return step === 0 ? landmark(city, 'diner') : landmark(city, 'bank');
     case 2:
-      return { x: 3584, y: 2560 };
+      return VIPER_NEST;
     case 3:
       return null;
     case 4:
-      return missions.step === 0 ? at('bank') : at('garage');
+      return step === 0 ? landmark(city, 'bank') : landmark(city, 'garage');
     case 5:
-      return missions.step === 0 ? at('observatory') : at('garage');
+      return step === 0 ? landmark(city, 'observatory') : landmark(city, 'garage');
     case 6:
-      return missions.raceTarget || at('raceGate');
+      return null;
     case 7:
-      return at('safehouse');
+      return landmark(city, 'safehouse');
     case 8:
       return null;
     case 9:
-      return missions.step === 2 ? at('garage') : at('port');
+      if (step === 0) return landmark(city, 'port');
+      if (step === 1) return landmark(city, 'port');
+      return landmark(city, 'garage');
     default:
       return null;
   }
 }
 
 /**
- * A taxi fare: a random pair of landmarks, priced by distance, the long way
- * across town paying more than a trip round the corner.
+ * Kalimat objektif untuk HUD: apa yang harus dilakukan pemain sekarang.
+ * Selalu mengembalikan string tidak kosong selama cerita berjalan.
  */
-export function offerFare(city, random) {
-  const keys = Object.keys(city.landmarks);
-  const from = city.landmarks[keys[Math.floor(random() * keys.length)]];
-  let to = city.landmarks[keys[Math.floor(random() * keys.length)]];
-  while (to === from) {
-    to = city.landmarks[keys[Math.floor(random() * keys.length)]];
+export function objectiveText(missions, race) {
+  if (!missions || !missions.active) {
+    if (missions && missions.fare) {
+      return missions.fare.pickedUp
+        ? `Drop off the fare at ${missions.fare.to.label || 'the destination'}`
+        : `Pick up the fare at ${missions.fare.from.label || 'the pickup'}`;
+    }
+    return 'The city is yours — drive, earn, and stay free.';
   }
-  const distance = Math.hypot(to.x - from.x, to.y - from.y);
-  return {
-    from: { x: from.x, y: from.y, label: from.label },
-    to: { x: to.x, y: to.y, label: to.label },
-    price: 100 + Math.round(distance / 40) * 10,
-    pickedUp: false,
-  };
+  const index = missions.index;
+  const step = missions.step;
+  switch (index) {
+    case 0:
+      return 'First Wheels: Steal a car';
+    case 1:
+      return step === 0
+        ? 'The Package: Pick up the package at the Diner (E)'
+        : 'The Package: Deliver the package to the Bank';
+    case 2:
+      return 'Viper Nest: Clear the Vipers';
+    case 3:
+      return 'Heat: Lose the cops — stay clean until the heat dies down';
+    case 4:
+      return step === 0
+        ? 'The Big Score: Hold E at the bank vault'
+        : 'The Big Score: Take the bag to the garage';
+    case 5:
+      return step === 0
+        ? 'Radio Silence: Steal the broadcast van at the Observatory'
+        : 'Radio Silence: Drive the van to the garage';
+    case 6:
+      if (race && race.active && race.checkpoints && race.checkpoints.length > 0) {
+        const left = race.checkpoints.length - race.index;
+        return `Grand Prix: Hit the checkpoints (${left} left)`;
+      }
+      return 'Grand Prix: Win the street race';
+    case 7:
+      return 'The Safehouse: Take the block from the Vipers';
+    case 8:
+      return 'Air Support: Survive the helicopter';
+    case 9:
+      if (step === 0) return 'Harbor Heist: Reach the Port Gate';
+      if (step === 1) return 'Harbor Heist: Clear the Port Gate';
+      return 'Harbor Heist: Get away — drive to the garage';
+    default:
+      return 'The city is yours — drive, earn, and stay free.';
+  }
 }

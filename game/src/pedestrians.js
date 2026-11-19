@@ -1,6 +1,7 @@
-// Pedestrians: the city's foot traffic. They walk the sidewalks, turn at corners, and run
-// from gunfire, speeding cars and bodies on the ground. A pedestrian has no name and no
-// destination that matters; what matters is that the street feels alive.
+// The city's foot traffic. Pedestrians walk the sidewalks, turn at corners,
+// and run from gunfire, speeding cars and bodies on the ground. A pedestrian
+// has no name and no destination that matters; what matters is that the
+// street feels alive.
 
 import { PED, WORLD } from './config.js';
 import { pickOne } from './random.js';

@@ -1,6 +1,7 @@
-// Cars: their types, the traffic that drives the roads, the parked cars waiting to be taken,
-// and the arcade driving model the player's car uses. A car is a point with a heading and a
-// speed; collisions treat it as two circles, one at each axle.
+// Cars: their types, the traffic that drives the roads, the parked cars waiting
+// to be taken, and the arcade driving model the player's car uses. A car is a
+// point with a heading and a speed; collisions treat it as two circles, one at
+// each axle.
 
 import { CAR, TRAFFIC, WORLD } from './config.js';
 import { pickInt, pickOne } from './random.js';

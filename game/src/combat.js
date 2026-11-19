@@ -1,6 +1,7 @@
-// Combat: fists, a pistol, bullets, and the Vipers who carry both. A punch is a short arc in
-// front of the player; a bullet flies straight until it meets a wall, a car, a pedestrian or a
-// body. Enemies chase the player on foot, punch up close and shoot from a distance.
+// Fists, a pistol, bullets, and the Vipers who carry both. A punch is a short
+// arc in front of the player; a bullet flies straight until it meets a wall, a
+// car, a pedestrian or a body. Enemies chase the player on foot, punch up
+// close and shoot from further off.
 
 import { PLAYER, SHOTGUN } from './config.js';
 import { hitsBuilding } from './city.js';

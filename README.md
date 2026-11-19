@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/gta6-01/alawymuhsin/gta6-browser-game/rank.svg)](https://make.fun/bounty/gta6-01)
 [![reward](https://make.fun/badge/gta6-01/alawymuhsin/gta6-browser-game/reward.svg)](https://make.fun/bounty/gta6-01)
 
-An original open-world crime game for make.fun's [gta6-01](https://make.fun/bounty/gta6-01) bounty — "Make GTA 6". It runs in a desktop browser from static files, with no network request and no build step.
+A home-grown open-world crime game built for make.fun's [gta6-01](https://make.fun/bounty/gta6-01) bounty — "Make GTA 6". It plays in a desktop browser straight from static files: no network requests, no build step, nothing to install.
 
 ## The game
 

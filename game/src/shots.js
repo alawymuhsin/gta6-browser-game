@@ -1,8 +1,9 @@
-// The screenshot scenes behind ?shot=cover|street|drive|mission. Each one plays the real
-// rules forward from a fresh world for a fixed number of steps, steered by a simple autopilot,
-// so the frame is what a short game really looks like and the same seed always gives the
-// same frame. The cover is the Harbor Heist escape at dusk: five stars, the helicopter
-// overhead, a roadblock on the road ahead, and two cop cars on the player's tail.
+// The screenshot scenes behind ?shot=cover|street|drive|mission. Each one plays
+// the real rules forward from a fresh world for a fixed number of steps, steered
+// by a simple autopilot, so the frame is what a short game really looks like
+// and the same seed always gives the same frame. The cover is the Harbor Heist
+// escape at dusk: five stars, the helicopter overhead, a roadblock on the road
+// ahead, and two cop cars on the player's tail.
 
 import { DAY, STEP } from './config.js';
 import { nearestRoad } from './city.js';

@@ -1,212 +1,191 @@
-// The loop: title screen, play, pause, and the staged screenshots. The world runs
-// on a fixed 60 Hz step whatever the display's rate; the renderer paints the state
-// each frame. Sound is all synthesised, and every one-shot key press is taken once
-// from the input, so a held key never double-fires.
+// main.js — titik masuk Solara Bay: memasang canvas, input, audio, dan dunia,
+// lalu menjalankan loop permainan. Dua mode: mode biasa (title → play → pause,
+// dengan save/load di localStorage) dan mode staged shot (?shot=cover|street|
+// drive|mission) yang memainkan satu scene dari seed tetap, menggambarnya, dan
+// menandai window.__shotReady supaya Playwright tahu frame-nya sudah siap.
 
-import { BEST_KEY, SAVE_KEY, STEP } from './config.js';
 import { createWorld } from './world.js';
-import { objectiveText } from './missions.js';
-import { createRenderer, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, ACTION_RADIO, createInput } from './input.js';
+import { createRenderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSED } from './render.js';
+import { createInput, ACTION_CONFIRM, ACTION_PAUSE, ACTION_MUTE, ACTION_RADIO } from './input.js';
 import { createAudio } from './audio.js';
 import { stageShot } from './shots.js';
+import { STEP, SAVE_KEY, BEST_KEY } from './config.js';
 
-const params = new URLSearchParams(window.location.search);
 const canvas = document.getElementById('game');
-const statusLine = document.getElementById('status');
+const statusEl = document.getElementById('status');
+const params = new URLSearchParams(window.location.search);
+const shotName = params.get('shot');
+const seed = Number.parseInt(params.get('seed') || '11', 10) || 11;
+
+const world = createWorld(seed);
+// Diekspos untuk smoke test dan debugging di browser: window.__game.state.
+window.__game = world;
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
 const audio = createAudio();
 
-const seed = Number(params.get('seed')) || 11;
-const world = createWorld(seed);
-let screen = SCREEN_TITLE;
+/** Skor terbaik yang pernah dibawa pulang (localStorage), untuk layar judul. */
 let best = 0;
-let saveExists = false;
 try {
-  best = Number(window.localStorage.getItem(BEST_KEY)) || 0;
-  saveExists = !!window.localStorage.getItem(SAVE_KEY);
+  best = Number.parseInt(window.localStorage.getItem(BEST_KEY) || '0', 10) || 0;
 } catch {
-  // Private mode: play without saving.
+  best = 0;
 }
-if (params.has('debug')) window.__game = world;
 
-function loadSave() {
+/** Apakah ada save yang bisa dilanjutkan. */
+function hasSave() {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
-    world.load(raw);
-    return true;
+    return !!window.localStorage.getItem(SAVE_KEY);
   } catch {
     return false;
   }
 }
 
+/** Simpan progres sekarang, dan perbarui skor terbaik kalau take-nya lebih besar. */
 function saveGame() {
   try {
     window.localStorage.setItem(SAVE_KEY, world.save());
-    saveExists = true;
-  } catch {
-    // Ignore: the game keeps running without a save.
-  }
-  const earned = world.state.stats.earned;
-  if (earned > best) {
-    best = earned;
-    try {
+    const earned = world.state.stats.earned;
+    if (earned > best) {
+      best = earned;
       window.localStorage.setItem(BEST_KEY, String(best));
-    } catch {
-      // Ignore.
     }
+  } catch {
+    // localStorage penuh atau diblokir: permainan tetap jalan tanpa save.
   }
 }
 
-function playEventSounds(events) {
-  for (const ev of events) {
-    switch (ev.kind) {
-      case 'shot':
-        if (ev.weapon === 'shotgun') audio.shotgun();
-        else audio.gunshot();
-        break;
-      case 'punch':
-        audio.punch();
-        break;
-      case 'crash':
-      case 'ram':
-        audio.crash();
-        break;
-      case 'horn':
-        audio.horn();
-        break;
-      case 'pickup':
-        audio.pickup();
-        break;
-      case 'mission-done':
-      case 'race-won':
-        audio.jingle();
-        audio.cash();
-        break;
-      case 'delivery-done':
-      case 'fare-done':
-      case 'collectible':
-        audio.cash();
-        break;
-      case 'busted':
-        audio.bust();
-        break;
-      case 'wasted':
-        audio.wasted();
-        break;
-      default:
-        break;
-    }
+/** Muat save yang ada ke dunia ini; false kalau tidak ada atau rusak. */
+function loadSave() {
+  try {
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    return world.load(raw);
+  } catch {
+    return false;
   }
 }
 
-/** The one-shot keys, taken once: confirm, pause, mute, radio. */
-function takeActions() {
-  const flags = input.takeActions();
+/** Hapus save supaya permainan baru dimulai dari garasi. */
+function clearSave() {
+  try {
+    window.localStorage.removeItem(SAVE_KEY);
+  } catch {
+    // Abaikan: permainan baru tetap jalan.
+  }
+}
+
+/** Extra yang dipakai renderer untuk HUD dan layar judul. */
+function extras() {
   return {
-    confirm: (flags & ACTION_CONFIRM) !== 0,
-    pause: (flags & ACTION_PAUSE) !== 0,
-    mute: (flags & ACTION_MUTE) !== 0,
-    radio: (flags & ACTION_RADIO) !== 0,
+    radio: audio.radioName(!!world.state.player.car),
+    best,
+    saveExists: hasSave(),
   };
 }
 
-function tick(dt) {
-  const state = world.state;
-  const snap = input.snapshot(
-    (sx, sy) => renderer.screenToWorld(sx, sy, state.camera),
-    !!state.player.car,
-  );
-  const acts = takeActions();
-  if (acts.mute) audio.setMuted(!audio.isMuted());
-
-  if (screen === SCREEN_TITLE) {
-    // The city lives behind the panel: traffic, peds and the clock keep moving.
-    world.step(dt, {
-      moveX: 0, moveY: 0, run: false, steer: 0, throttle: 0, brake: 0,
-      interact: false, interactHeld: false, punch: false, shoot: false,
-      horn: false, weapon: false, aimX: state.player.x, aimY: state.player.y,
-    });
-    if (acts.confirm) {
-      audio.ensure();
-      audio.click();
-      if (saveExists) loadSave();
-      else world.beginStory();
-      screen = SCREEN_PLAY;
-    } else if (input.isKeyDown('KeyN')) {
-      audio.ensure();
-      audio.click();
-      world.reset();
-      world.beginStory();
-      screen = SCREEN_PLAY;
-    }
-    return;
-  }
-
-  if (screen === SCREEN_PAUSED) {
-    if (acts.pause) screen = SCREEN_PLAY;
-    else if (input.isKeyDown('KeyS')) {
-      saveGame();
-      screen = SCREEN_TITLE;
-    }
-    return;
-  }
-
-  // Playing.
-  if (acts.radio) {
-    const name = audio.nextStation();
-    state.toasts.push({ text: name === 'Radio off' ? 'Radio off' : `♪ ${name}`, time: 2 });
-  }
-  const events = world.step(dt, snap);
-  for (const ev of events) {
-    if (ev.kind === 'save') saveGame();
-  }
-  playEventSounds(events);
-  audio.engine(state.player.car ? Math.min(1, state.player.car.speed / 420) : 0);
-  audio.siren(state.cops.length > 0);
-  audio.rotor(!!state.heli);
-  audio.setRadioInCar(!!state.player.car);
-  audio.music(dt);
-  if (acts.pause) {
-    saveGame();
-    screen = SCREEN_PAUSED;
-  }
-  const objective = objectiveText(state.missions, state.race);
-  if (statusLine && statusLine.textContent !== objective) statusLine.textContent = objective;
-}
-
-const shotName = params.get('shot');
 if (shotName) {
-  // A staged screenshot: set the scene, draw it twice, and say so.
+  // Mode staged shot: mainkan scene-nya, gambar satu frame, lalu beri tahu
+  // Playwright bahwa frame sudah siap. Loop terus menggambar supaya kanvas
+  // tetap menampilkan frame itu kalau screenshot diambil agak terlambat.
   const staged = stageShot(shotName, world);
-  const extras = { radio: null, saveExists: false, best: staged.best };
-  renderer.draw(world.state, staged.screen, extras);
-  renderer.draw(world.state, staged.screen, extras);
+  renderer.draw(world.state, staged.screen, { radio: null, best: staged.best, saveExists: false });
   window.__shotReady = true;
-  window.__shotDebug = { screen: staged.screen, best: staged.best };
+  if (statusEl) statusEl.textContent = `Solara Bay — staged shot: ${shotName}`;
+  requestAnimationFrame(function keepDrawing() {
+    renderer.draw(world.state, staged.screen, { radio: null, best: staged.best, saveExists: false });
+    requestAnimationFrame(keepDrawing);
+  });
 } else {
+  // Mode permainan biasa.
+  let screen = SCREEN_TITLE;
+  let lastMission = world.state.missions.index;
   let last = performance.now();
   let acc = 0;
-  const frame = (now) => {
+
+  if (statusEl) statusEl.textContent = 'Solara Bay — Street Heat';
+
+  function frame(now) {
     requestAnimationFrame(frame);
     let dt = (now - last) / 1000;
     last = now;
     if (dt > 0.25) dt = 0.25;
-    acc += dt;
-    let guard = 0;
-    while (acc >= STEP && guard < 8) {
-      acc -= STEP;
-      guard += 1;
-      tick(STEP);
+    if (dt < 0) dt = 0;
+    const actions = input.takeActions();
+
+    if (screen === SCREEN_TITLE) {
+      if (actions & ACTION_CONFIRM) {
+        audio.ensure();
+        audio.click();
+        if (hasSave() && !input.isKeyDown('KeyN')) {
+          loadSave();
+        } else {
+          clearSave();
+          world.reset();
+        }
+        lastMission = world.state.missions.index;
+        screen = SCREEN_PLAY;
+      } else if (input.isKeyDown('KeyN')) {
+        audio.ensure();
+        audio.click();
+        clearSave();
+        world.reset();
+        lastMission = world.state.missions.index;
+        screen = SCREEN_PLAY;
+      }
+    } else if (screen === SCREEN_PLAY) {
+      if (actions & ACTION_PAUSE) {
+        audio.click();
+        saveGame();
+        screen = SCREEN_PAUSED;
+      } else {
+        if (actions & ACTION_MUTE) {
+          audio.setMuted(!audio.isMuted());
+        }
+        if (actions & ACTION_RADIO) {
+          const name = audio.nextStation();
+          if (name !== 'Radio off') audio.click();
+        }
+        acc += dt;
+        let steps = 0;
+        while (acc >= STEP && steps < 5) {
+          const snap = input.snapshot(
+            (sx, sy) => renderer.screenToWorld(sx, sy, world.state.camera),
+            !!world.state.player.car,
+          );
+          if (snap.horn) audio.horn();
+          world.step(STEP, snap);
+          acc -= STEP;
+          steps += 1;
+        }
+        if (steps === 5) acc = 0;
+        const state = world.state;
+        audio.setRadioInCar(!!state.player.car);
+        audio.engine(state.player.car ? Math.min(1, state.player.car.speed / 400) : 0);
+        audio.siren(state.cops.length > 0);
+        audio.rotor(!!state.heli);
+        audio.music(dt);
+        if (state.missions.index !== lastMission) {
+          lastMission = state.missions.index;
+          saveGame();
+          audio.jingle();
+        }
+        if (state.banner && state.banner.title === 'Busted') audio.bust();
+        if (state.banner && state.banner.title === 'Wasted') audio.wasted();
+      }
+    } else if (screen === SCREEN_PAUSED) {
+      if (actions & ACTION_PAUSE) {
+        audio.click();
+        screen = SCREEN_PLAY;
+      } else if (input.isKeyDown('KeyS')) {
+        saveGame();
+        audio.click();
+        screen = SCREEN_TITLE;
+      }
     }
-    if (acc > STEP) acc = 0;
-    renderer.draw(world.state, screen, {
-      radio: audio.radioName(!!world.state.player.car),
-      saveExists,
-      best,
-    });
-  };
+
+    renderer.draw(world.state, screen, extras());
+  }
+
   requestAnimationFrame(frame);
 }

@@ -1,7 +1,8 @@
-// Keyboard and mouse input. Held keys give movement and driving; one-shot presses (enter a
-// car, punch, pause, mute) are queued as flags and taken once by the loop, so a press between
-// two frames is never lost and never counted twice. The mouse aims the pistol: the loop turns
-// its screen position into a world position through the renderer's projection.
+// Keyboard and mouse input. Held keys give movement and driving; one-shot
+// presses (enter a car, punch, pause, mute) are queued as flags and taken once
+// by the loop, so a press between two frames is never lost and never counted
+// twice. The mouse aims the pistol: the loop turns its screen position into a
+// world position through the renderer's projection.
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;

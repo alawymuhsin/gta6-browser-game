@@ -1,9 +1,10 @@
-// Sound, all of it synthesised in WebAudio: no audio files, no network, nothing to load.
-// The engine and the siren are loops whose pitch follows the game; everything else is a
-// one-shot. Nothing plays until the player first presses a key or clicks, which is when the
-// browser allows an AudioContext to start. The car radio is three stations of the same
-// synth: Solara FM rides the same chords as the score, Bay Beats drops the bass an octave,
-// Coast Talk is mostly a host and a jingle.
+// All sound is synthesised in WebAudio: no audio files, no network, nothing
+// to load. The engine and the siren are loops whose pitch follows the game;
+// everything else is a one-shot. Nothing plays until the player first presses
+// a key or clicks, which is when the browser allows an AudioContext to start.
+// The car radio is three stations built from the same synth: Solara FM rides
+// the same chords as the score, Bay Beats drops the bass an octave, Coast
+// Talk is mostly a host and a jingle.
 
 import { RADIO } from './config.js';
 

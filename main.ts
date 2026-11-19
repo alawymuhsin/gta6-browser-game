@@ -1,24 +1,26 @@
-// The entrypoint: copy game/ and screenshots/ into /output (or $MAKEFUN_OUTPUT_DIR)
-// and write dossier.json from them with the kit's buildDossier. Node 22, standard
-// library only — no build step, no network, deterministic output.
+// main.ts — entrypoint build: salin game/ dan screenshots/ ke direktori output,
+// lalu tulis dossier.json dari isi output itu via buildDossier. Dijalankan dengan
+// `node main.ts` (Node 22, tanpa build dan tanpa install). Direktori output
+// diambil dari $MAKEFUN_OUTPUT_DIR kalau ada, kalau tidak /output. Dua run
+// berurutan menghasilkan dossier.json yang byte-identik, karena buildDossier
+// deterministik dan isi game/ + screenshots/ tidak berubah di antara run.
 
-import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const outDir = process.env.MAKEFUN_OUTPUT_DIR || '/output';
-const here = dirname(fileURLToPath(import.meta.url));
+const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+mkdirSync(out, { recursive: true });
 
-mkdirSync(outDir, { recursive: true });
-cpSync(join(here, 'game'), join(outDir, 'game'), { recursive: true });
-cpSync(join(here, 'screenshots'), join(outDir, 'screenshots'), { recursive: true });
-writeFileSync(
-  join(outDir, 'dossier.json'),
-  buildDossier(outDir, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-  }),
-);
+// Bersihkan salinan run sebelumnya supaya tidak ada file usang yang ikut
+// terhitung di dossier (misalnya file yang sudah dihapus dari game/).
+rmSync(`${out}/game`, { recursive: true, force: true });
+rmSync(`${out}/screenshots`, { recursive: true, force: true });
+cpSync('game', `${out}/game`, { recursive: true });
+cpSync('screenshots', `${out}/screenshots`, { recursive: true });
+
+writeFileSync(`${out}/dossier.json`, buildDossier(out, {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  game_max_files: 993,
+  game_max_bytes: 50331648,
+}));

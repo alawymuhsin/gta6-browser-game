@@ -1,881 +1,951 @@
-// The world: everything the game simulates. The city, the player, the traffic,
-// the cops and the helicopter, the race, the fares and deliveries, and the ten
-// missions for Maya. One fixed step of 1/60 s at a time; the browser's loop calls
-// step() and the renderer paints whatever is in state afterwards.
+// world.js — simulasi Solara Bay: satu dunia yang berisi pemain, mobil, pejalan
+// kaki, musuh, polisi, helikopter, balapan, delivery, dan sepuluh misi cerita.
+// createWorld(seed) membangun keadaan awal yang deterministik; step(dt, input)
+// memajukan satu langkah tetap (1/60 detik). File ini yang mengikat semua modul
+// lain: city memberi peta, activities memberi balapan/delivery/koleksi, vehicles
+// memberi mobil, pedestrians memberi keramaian, combat memberi tembak-menembak,
+// police memberi kejaran, dan missions memberi data cerita.
 //
-// reset() keeps the state object itself — it mutates the old one in place. The
-// staged screenshots and the restart button both hold a reference to it, so
-// replacing it would leave them pointing at a dead world.
+// Aturan waktu: time dihitung dari counter frame (frames * STEP) supaya dua run
+// dengan input yang sama menghasilkan waktu yang persis sama.
+// Aturan reset: reset() membangun keadaan segar lalu menyalinnya KE DALAM objek
+// state yang sama — identitas objek tidak pernah diganti, karena shots.js dan
+// render memegang referensi state yang sama selama permainan berjalan.
 
-import { buildCity, landmark, pushOutOfBuildings } from './city.js';
-import { CAR, PLAYER, RACE, SHOTGUN, STEP, VIEW, WANTED, WORLD } from './config.js';
+import {
+  WORLD, STEP, VIEW, PLAYER, CAR, TRAFFIC, PED, WANTED, POLICE, HELI,
+  ROADBLOCK, DAY, RADIO, RACE, COLLECTIBLES, SHOTGUN, SAVE_KEY, BEST_KEY,
+  PALETTE, DISTRICT_ROOFS, FONT,
+} from './config.js';
 import { createRandom } from './random.js';
-import { createCar, drivePlayerCar, spawnTraffic, updateTraffic } from './vehicles.js';
-import { scareNearby, spawnPedestrians, updatePedestrians } from './pedestrians.js';
-import { createHeli, spawnCopCar, updateHeli, updatePolice, updateRoadblocks, wantedCarCount, wantedHeli } from './police.js';
-import { createEnemy, fireBullet, fireShotgun, punch, updateBullets, updateEnemies } from './combat.js';
-import { createCollectibles, collectibleNear, createRaceState, offerDelivery, raceTarget, startRace, updateDelivery, updateRace } from './activities.js';
-import { MISSIONS, createMissions, offerFare } from './missions.js';
+import {
+  buildCity, landmark, nearestRoad, hitsBuilding, pushOutOfBuildings,
+  collectibleSpots, randomRoadSpot, WATER_Y,
+} from './city.js';
+import { MISSION_NAMES, MISSION_PAY, MISSION_BRIEFINGS } from './missions.js';
+import {
+  createRaceState, startRace, raceTarget, updateRace,
+  offerDelivery, updateDelivery, createCollectibles, collectibleNear,
+} from './activities.js';
+import {
+  CAR_TYPES, createCar, carAxles, spawnTraffic, updateTraffic, drivePlayerCar, damageCar,
+} from './vehicles.js';
+import { spawnPedestrians, scareNearby, updatePedestrians, createPedestrian } from './pedestrians.js';
+import {
+  createEnemy, fireShotgun, fireBullet, updateBullets, punch, updateEnemies,
+} from './combat.js';
+import {
+  wantedHeli, createHeli, updateHeli, updateRoadblocks,
+  wantedCarCount, spawnCopCar, updatePolice,
+} from './police.js';
 
-/** The six pickups on the map: health, ammo, and cash at the big landmarks. */
-function spawnPickups(city) {
-  const spots = [
+/** Batasi angka ke interval, dipakai untuk posisi pemain dan kamera. */
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+/** Tambah satu toast (pesan singkat di layar) ke keadaan. */
+function addToast(state, text) {
+  state.toasts.push({ text, time: 4 });
+  if (state.toasts.length > 4) state.toasts.shift();
+}
+
+/** Tampilkan briefing misi di HUD selama beberapa detik. */
+function setMissionMessage(missions, text) {
+  missions.message = text;
+  missions.messageTime = 5;
+}
+
+/** Enam pickup di kota: dua nyawa, dua amunisi, dua uang — masing-masing 100 unit
+ *  di selatan sebuah landmark, di atas jalan, supaya teleport misi tidak
+ *  menyapunya secara tidak sengaja. */
+function makePickups(city) {
+  const defs = [
     { key: 'hospital', kind: 'health' },
     { key: 'policeHq', kind: 'ammo' },
-    { key: 'diner', kind: 'health' },
-    { key: 'market', kind: 'ammo' },
+    { key: 'market', kind: 'cash' },
+    { key: 'university', kind: 'health' },
+    { key: 'observatory', kind: 'ammo' },
     { key: 'port', kind: 'cash' },
-    { key: 'raceGate', kind: 'cash' },
   ];
-  // A hundred units down the road from the landmark, so a player who teleports to
-  // the landmark itself — or steps out of a car beside it — does not scoop it up
-  // by accident.
-  return spots.map(({ key, kind }) => {
+  return defs.map(({ key, kind }) => {
     const spot = landmark(city, key);
-    return { x: spot.x + 100, y: spot.y, kind, taken: false };
+    return { x: spot.x, y: spot.y + 100, kind, taken: false };
   });
 }
 
-/** A fresh state for a seed: the city, the traffic, the peds, and Maya waiting. */
-function freshState(seed) {
+/** Keadaan segar untuk satu seed: kota, pemain di depan garasi, lalu lintas,
+ *  pejalan kaki, dan semua sistem dalam keadaan awal. */
+function makeFreshState(seed) {
+  const random = createRandom(seed);
   const city = buildCity(seed);
-  const random = createRandom(seed + 77);
-  const cars = spawnTraffic(city, random);
-  const peds = spawnPedestrians(city, random);
+  const roadblocks = [];
+  roadblocks.cooldown = 0;
   return {
     seed,
-    city,
     random,
+    city,
     frames: 0,
     time: 0,
     player: {
-      x: 512, y: 572, faceAngle: 0, aimAngle: 0, angle: 0,
-      money: 0, health: 100, wanted: 0,
-      ammo: PLAYER.startAmmo, hasPistol: true, hasShotgun: false, weapon: 'pistol',
-      car: null, invulnerable: 0, punchCooldown: 0, shootCooldown: 0,
-      stealProgress: 0, stealTarget: null,
+      x: 512, y: 572, angle: 0, faceAngle: 0, aimAngle: 0,
+      money: 0, wanted: 0, health: PLAYER.health, ammo: PLAYER.startAmmo,
+      hasPistol: true, hasShotgun: false, weapon: 'pistol',
+      invulnerable: 0, car: null,
     },
-    missions: createMissions(),
-    race: createRaceState(),
-    raceMarker: null,
-    camera: { x: 512, y: 572, zoom: VIEW.zoomFoot },
-    cars, cops: [], peds, enemies: [], bullets: [], particles: [],
-    pickups: spawnPickups(city),
-    collectibles: createCollectibles(),
-    roadblocks: [],
+    missions: {
+      index: 0, step: 0, active: true, setup: '',
+      fare: null, message: '', messageTime: 0,
+    },
+    cars: spawnTraffic(city, random),
+    peds: spawnPedestrians(city, random),
+    enemies: [],
+    cops: [],
     heli: null,
+    roadblocks,
+    collectibles: createCollectibles(),
+    pickups: makePickups(city),
+    race: createRaceState(),
     delivery: null,
-    toasts: [], banner: null, shake: 0,
-    stats: { earned: 0 },
+    camera: { x: 512, y: 572, zoom: VIEW.zoomFoot },
     safehouseOwned: false,
-    wantedQuiet: 0, wantedDecay: 0, crashCooldown: 0,
-    fareCooldown: 20, deliveryCooldown: 30,
+    bullets: [],
+    toasts: [],
+    banner: null,
+    shake: 0,
+    particles: [],
+    stats: { earned: 0 },
+    raceMarker: null,
+    wantedTimer: WANTED.decayDelay,
+    vaultTimer: 0,
+    missionTimer: 0,
+    fareTimer: 0,
+    deliveryTimer: 0,
+    stealTimer: 0,
+    stealTarget: null,
+    shootCooldown: 0,
+    punchCooldown: 0,
   };
 }
 
-function payPlayer(state, amount) {
-  state.player.money += amount;
-  state.stats.earned += amount;
+/** Bangun satu dunia dari seed. Metode-metodenya dipakai main.js, shots.js, dan tes. */
+export function createWorld(seed) {
+  const world = {
+    seed,
+    state: makeFreshState(seed),
+
+    /** Majukan simulasi satu langkah tetap. Input boleh kosong. */
+    step(dt, input) {
+      stepWorld(world, dt, input || {});
+    },
+
+    /** Kembalikan dunia ke keadaan segar (seed yang sama), TANPA mengganti
+     *  objek state — referensi world.state tetap sama seperti sebelumnya. */
+    reset() {
+      const fresh = makeFreshState(world.seed);
+      const state = world.state;
+      for (const key of Object.keys(state)) delete state[key];
+      Object.assign(state, fresh);
+    },
+
+    /** Beri pemain sebuah mobil dari jenis tertentu di posisi dan arah tertentu,
+     *  lalu dudukkan pemain di dalamnya. Dipakai tes dan staged shots. */
+    giveCar(type, x, y, angle) {
+      const s = world.state;
+      const car = createCar(s.random, x, y, angle, type, 'player');
+      car.speed = 0;
+      s.cars.push(car);
+      s.player.car = car;
+      s.player.x = x;
+      s.player.y = y;
+      s.player.angle = angle;
+      return car;
+    },
+
+    /** Atur level wanted (0–5) dan mulai ulang timer pendinginannya. */
+    setWanted(n) {
+      const s = world.state;
+      s.player.wanted = clamp(n, 0, WANTED.max);
+      s.wantedTimer = WANTED.decayDelay;
+    },
+
+    /** Munculkan n mobil polisi sekarang juga (dipakai staged shot cover). */
+    spawnCopsNow(n) {
+      const s = world.state;
+      let placed = 0;
+      let guard = 0;
+      while (placed < n && guard < 40) {
+        guard += 1;
+        const car = spawnCopCar(s.city, s.random, s.player.x, s.player.y);
+        if (car) {
+          s.cops.push(car);
+          placed += 1;
+        }
+      }
+    },
+
+    /** Pindahkan pemain (dan kamera) ke sebuah titik. */
+    placePlayer(x, y) {
+      const s = world.state;
+      s.player.x = x;
+      s.player.y = y;
+      s.camera.x = x;
+      s.camera.y = y;
+    },
+
+    /** Simpan progres ke string JSON: pemain, misi, safehouse, koleksi, balapan. */
+    save() {
+      const s = world.state;
+      return JSON.stringify({
+        version: 1,
+        time: s.time,
+        player: {
+          x: s.player.x, y: s.player.y, money: s.player.money,
+          health: s.player.health, ammo: s.player.ammo,
+          hasPistol: s.player.hasPistol, hasShotgun: s.player.hasShotgun,
+          weapon: s.player.weapon, wanted: s.player.wanted,
+        },
+        missions: { index: s.missions.index, step: s.missions.step },
+        safehouseOwned: s.safehouseOwned,
+        collectibles: s.collectibles.map((c) => c.taken),
+        race: { laps: s.race.laps },
+        stats: { earned: s.stats.earned },
+      });
+    },
+
+    /** Muat progres dari save(): pulihkan field-field di atas ke dunia ini. */
+    load(data) {
+      const s = world.state;
+      let parsed = data;
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed);
+        } catch (err) {
+          return false;
+        }
+      }
+      if (!parsed || parsed.version !== 1) return false;
+      s.time = parsed.time || 0;
+      s.frames = Math.round(s.time / STEP);
+      Object.assign(s.player, parsed.player || {});
+      s.player.car = null;
+      s.missions.index = (parsed.missions && parsed.missions.index) || 0;
+      s.missions.step = (parsed.missions && parsed.missions.step) || 0;
+      s.missions.setup = '';
+      s.safehouseOwned = !!parsed.safehouseOwned;
+      if (Array.isArray(parsed.collectibles)) {
+        parsed.collectibles.forEach((taken, i) => {
+          if (s.collectibles[i]) s.collectibles[i].taken = !!taken;
+        });
+      }
+      if (parsed.race) s.race.laps = parsed.race.laps || 0;
+      if (parsed.stats) s.stats.earned = parsed.stats.earned || 0;
+      return true;
+    },
+  };
+  return world;
 }
 
-function setMessage(state, text) {
-  state.missions.message = text;
-  state.missions.messageTime = 6;
+/** Satu langkah simulasi. Urutannya disengaja: setup misi dulu (supaya musuh/van/
+ *  balapan sudah ada sebelum tes memeriksa setelah satu step), lalu pemain, lalu
+ *  dunia, lalu logika cerita, lalu setup lagi — karena cerita bisa mengubah step
+ *  di tengah langkah, dan setup step yang baru harus jalan di langkah yang sama. */
+function stepWorld(world, dt, input) {
+  const s = world.state;
+  // Hormati waktu yang diatur dari luar (staged shots mengatur senja, siang,
+  // atau tengah malam langsung di state.time): sinkronkan counter frame dari
+  // time sebelum melangkah, supaya time tidak ditimpa kembali ke nol.
+  if (s.time !== s.frames * STEP) {
+    s.frames = Math.round(s.time / STEP);
+  }
+  s.frames += 1;
+  s.time = s.frames * STEP;
+  runMissionSetup(world);
+  updatePlayer(world, dt, input);
+  updateWorld(world, dt, input);
+  updateStory(world, dt, input);
+  runMissionSetup(world);
+  updatePostStory(world, dt);
 }
 
-function setWantedLevel(state, level) {
-  state.player.wanted = Math.max(0, Math.min(WANTED.max, level));
-  state.wantedQuiet = 0;
-  state.wantedDecay = 0;
+/** Naikkan wanted dan mulai ulang timer pendinginan. */
+function addWanted(world, amount) {
+  const s = world.state;
+  s.player.wanted = Math.min(WANTED.max, s.player.wanted + amount);
+  s.wantedTimer = WANTED.decayDelay;
 }
 
-function addWanted(state, amount) {
-  setWantedLevel(state, state.player.wanted + amount);
+/** Lukai pemain sekali, dengan jendela kebal singkat supaya satu tembakan
+ *  tidak menghabiskan nyawa sekaligus. */
+function damagePlayer(world, amount) {
+  const s = world.state;
+  const p = s.player;
+  if (p.invulnerable > 0 || p.health <= 0) return;
+  p.health -= amount;
+  p.invulnerable = 0.6;
+  s.shake = Math.max(s.shake, 5);
 }
 
-function addParticles(state, x, y, count, color) {
+/** Semburan partikel kecil di satu titik (percikan peluru, debu tabrakan). */
+function spawnParticles(state, x, y, count, color) {
   for (let i = 0; i < count; i += 1) {
     const angle = state.random() * Math.PI * 2;
-    const speed = 40 + state.random() * 120;
+    const speed = 60 + state.random() * 140;
     state.particles.push({
       x, y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: 0.4 + state.random() * 0.3,
-      color,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life: 0.3 + state.random() * 0.3, color, size: 2 + state.random() * 2,
     });
   }
 }
 
-/** The player is hurt. A short grace window, then Wasted at the hospital. */
-function damagePlayer(state, damage, events) {
-  const player = state.player;
-  if (player.invulnerable > 0) return;
-  player.health -= damage;
-  player.invulnerable = 0.8;
-  state.shake = Math.max(state.shake, 6);
-  if (player.health > 0) return;
-  player.health = 100;
-  player.invulnerable = 2;
-  player.money = Math.max(0, player.money - 250);
-  player.wanted = 0;
-  state.wantedQuiet = 0;
-  if (player.car) {
-    player.car.kind = 'parked';
-    player.car = null;
+/** Mobil pemain menabrak gedung: dorong keluar dari tembok, rem mendadak,
+ *  dan rusak kalau benturannya keras. */
+function collideCarWithBuildings(state, car) {
+  let hitWall = false;
+  for (const axle of carAxles(car)) {
+    const body = { x: axle.x, y: axle.y };
+    if (pushOutOfBuildings(state.city, body, axle.r)) {
+      car.x += body.x - axle.x;
+      car.y += body.y - axle.y;
+      hitWall = true;
+    }
   }
-  const hospital = landmark(state.city, 'hospital');
-  player.x = hospital.x;
-  player.y = hospital.y;
-  player.faceAngle = 0;
-  state.cops.length = 0;
-  state.banner = { title: 'Wasted', sub: 'Maya covers the hospital bill — $250', time: 3 };
-  events.push({ kind: 'wasted' });
+  if (hitWall) {
+    const impact = Math.hypot(car.vx, car.vy);
+    car.vx *= 0.4;
+    car.vy *= 0.4;
+    car.speed = Math.hypot(car.vx, car.vy);
+    if (impact > 220) {
+      damageCar(car, Math.round((impact - 220) / 20));
+      state.shake = Math.max(state.shake, 5);
+      spawnParticles(state, car.x, car.y, 8, '#c9c9c9');
+    }
+  }
 }
 
-/** Get out of a car, on the pavement beside it. */
-function leaveCar(state) {
-  const player = state.player;
-  const car = player.car;
+/** Gerakan dan aksi pemain: mengemudi atau jalan kaki, interaksi, pukul, tembak. */
+function updatePlayer(world, dt, input) {
+  const s = world.state;
+  const p = s.player;
+  s.shootCooldown = Math.max(0, (s.shootCooldown || 0) - dt);
+  s.punchCooldown = Math.max(0, (s.punchCooldown || 0) - dt);
+  p.invulnerable = Math.max(0, (p.invulnerable || 0) - dt);
+
+  if (p.car) {
+    drivePlayerCar(p.car, input.steer, input.throttle, input.brake, dt);
+    collideCarWithBuildings(s, p.car);
+    p.x = p.car.x;
+    p.y = p.car.y;
+    p.angle = p.car.angle;
+    if (input.horn) scareNearby(s.peds, p.x, p.y, 220);
+    if (input.interact) exitCar(world);
+    if (input.shoot) tryShoot(world, input);
+    return;
+  }
+
+  const moving = input.moveX !== 0 || input.moveY !== 0;
+  if (moving) p.faceAngle = Math.atan2(input.moveY, input.moveX);
+  if (input.aimX !== undefined && input.aimY !== undefined) {
+    p.aimAngle = Math.atan2(input.aimY - p.y, input.aimX - p.x);
+  } else {
+    p.aimAngle = p.faceAngle;
+  }
+
+  const speed = input.run ? PLAYER.runSpeed : PLAYER.walkSpeed;
+  p.x = clamp(p.x + input.moveX * speed * dt, PLAYER.radius, WORLD.size - PLAYER.radius);
+  p.y = clamp(p.y + input.moveY * speed * dt, PLAYER.radius, WATER_Y - PLAYER.radius);
+  pushOutOfBuildings(s.city, p, PLAYER.radius);
+
+  // Interaksi misi didahulukan: tombol E di dekat target misi tidak boleh
+  // malah mencuri mobil parkir yang kebetulan berdiri di situ.
+  const missionHandled = handleMissionInteract(world, input, dt);
+  if (!missionHandled) handleSteal(world, input, dt);
+
+  if (input.punch && s.punchCooldown <= 0) {
+    const hit = punch(p, p.faceAngle, [...s.enemies, ...s.peds], PLAYER.punchRange, PLAYER.punchDamage);
+    if (hit.length > 0) {
+      s.punchCooldown = PLAYER.punchCooldown;
+      if (hit.some((t) => t.health === undefined)) addWanted(world, WANTED.hitPed);
+    }
+  }
+  if (input.shoot) tryShoot(world, input);
+  if (input.weapon && p.hasShotgun) {
+    p.weapon = p.weapon === 'pistol' ? 'shotgun' : 'pistol';
+  }
+}
+
+/**
+ * Interaksi yang terikat misi. Mengembalikan true kalau tombol E sudah ditangani
+ * di sini, supaya logika curi mobil dilewati pada langkah ini.
+ */
+function handleMissionInteract(world, input, dt) {
+  const s = world.state;
+  const m = s.missions;
+  const p = s.player;
+  if (!m.active) {
+    if (s.delivery && !s.delivery.pickedUp && input.interact) {
+      const d = Math.hypot(p.x - s.delivery.from.x, p.y - s.delivery.from.y);
+      if (d < 90) return true;
+    }
+    return false;
+  }
+  if (m.index === 1 && m.step === 0 && input.interact) {
+    const diner = landmark(s.city, 'diner');
+    if (Math.hypot(p.x - diner.x, p.y - diner.y) < 90) {
+      setMissionStep(world, 1);
+      addToast(s, 'Package picked up — take it to the Bank');
+      return true;
+    }
+  }
+  if (m.index === 4 && m.step === 0) {
+    const bank = landmark(s.city, 'bank');
+    if (Math.hypot(p.x - bank.x, p.y - bank.y) < 90) {
+      if (input.interactHeld) {
+        s.vaultTimer = (s.vaultTimer || 0) + dt;
+        // Epsilon kecil: 240 langkah x (1/60) berakumulasi jadi 3,9999... bukan 4,0.
+        if (s.vaultTimer >= 4 - 0.001) {
+          s.vaultTimer = 0;
+          setMissionStep(world, 1);
+          addToast(s, 'Vault open — take the bag to the garage');
+        }
+      } else {
+        s.vaultTimer = 0;
+      }
+      return true;
+    }
+    s.vaultTimer = 0;
+  }
+  return false;
+}
+
+/** Tahan E di dekat mobil untuk mencurinya (0,6 detik). */
+function handleSteal(world, input, dt) {
+  const s = world.state;
+  const p = s.player;
+  let best = null;
+  let bestDist = 70;
+  for (const car of s.cars) {
+    if (car === p.car || car.wrecked) continue;
+    const d = Math.hypot(car.x - p.x, car.y - p.y);
+    if (d < bestDist) { bestDist = d; best = car; }
+  }
+  if (!best || !input.interactHeld) {
+    s.stealTimer = 0;
+    s.stealTarget = null;
+    return;
+  }
+  if (s.stealTarget !== best) {
+    s.stealTarget = best;
+    s.stealTimer = 0;
+  }
+  s.stealTimer += dt;
+  if (s.stealTimer >= CAR.stealTime) {
+    s.stealTimer = 0;
+    s.stealTarget = null;
+    stealCar(world, best);
+  }
+}
+
+/** Ambil alih sebuah mobil: sopir lalu lintas kabur, pemain duduk di dalamnya. */
+function stealCar(world, car) {
+  const s = world.state;
+  const p = s.player;
+  if (car.kind === 'traffic') {
+    const driver = createPedestrian(s.random, s.city);
+    driver.x = car.x;
+    driver.y = car.y;
+    driver.state = 'flee';
+    const fleeAngle = s.random() * Math.PI * 2;
+    driver.fleeX = Math.cos(fleeAngle);
+    driver.fleeY = Math.sin(fleeAngle);
+    driver.fleeTime = 2.5;
+    s.peds.push(driver);
+  }
+  car.kind = 'player';
+  car.speed = 0;
+  p.car = car;
+  p.x = car.x;
+  p.y = car.y;
+  p.angle = car.angle;
+  addWanted(world, WANTED.stealCar);
+  if (s.missions.active && s.missions.index === 0) advanceMission(world);
+  if (s.missions.active && s.missions.index === 5 && s.missions.step === 0 && car.missionVan) {
+    setMissionStep(world, 1);
+    addToast(s, 'Van stolen — drive it to the garage');
+  }
+}
+
+/** Keluar dari mobil: mobil jadi parkir, pemain berdiri di sisi kanannya. */
+function exitCar(world) {
+  const s = world.state;
+  const p = s.player;
+  const car = p.car;
   if (!car) return;
   car.kind = 'parked';
-  player.car = null;
-  player.x = car.x + 40;
-  player.y = car.y;
-  player.faceAngle = car.angle;
-  pushOutOfBuildings(state.city, player, PLAYER.radius);
+  car.speed = 0;
+  p.car = null;
+  const side = car.angle + Math.PI / 2;
+  p.x = clamp(car.x + Math.cos(side) * 40, PLAYER.radius, WORLD.size - PLAYER.radius);
+  p.y = clamp(car.y + Math.sin(side) * 40, PLAYER.radius, WATER_Y - PLAYER.radius);
+  pushOutOfBuildings(s.city, p, PLAYER.radius);
 }
 
-/** Get in a car. Stealing one brings the heat; taking the van is the job. */
-function enterCar(state, car, events) {
-  const player = state.player;
-  car.kind = 'player';
-  car.road = null;
-  player.car = car;
-  player.x = car.x;
-  player.y = car.y;
-  player.stealProgress = 0;
-  player.stealTarget = null;
-  if (!car.missionVan) {
-    addWanted(state, WANTED.stealCar);
-    events.push({ kind: 'steal' });
-  }
-  scareNearby(state.peds, car.x, car.y, 200);
-}
-
-/** One frame of the simulation. The input is a plain snapshot; events come back in the array. */
-function stepWorld(state, dt, input, events) {
-  const player = state.player;
-  const city = state.city;
-
-  // The clock counts frames, not added-up fractions: frames * STEP is exactly 1
-  // after a second and exactly 300 after a day, where adding 1/60 sixty times is not.
-  state.frames += 1;
-  state.time = state.frames * STEP;
-  player.punchCooldown = Math.max(0, player.punchCooldown - dt);
-  player.shootCooldown = Math.max(0, player.shootCooldown - dt);
-  player.invulnerable = Math.max(0, player.invulnerable - dt);
-  state.crashCooldown = Math.max(0, state.crashCooldown - dt);
-  if (state.missions.messageTime > 0) state.missions.messageTime -= dt;
-
-  // The story's setups happen first, so a job's enemies and vans exist before the
-  // rest of the frame runs. The advance checks run last, so a job can complete in
-  // the same step its condition is met.
-  updateStorySetup(state);
-
-  // --- The player ------------------------------------------------------------
-  if (player.car) {
-    const car = player.car;
-    drivePlayerCar(car, input.steer || 0, input.throttle || 0, input.brake || 0, dt);
-    const body = { x: car.x, y: car.y };
-    if (pushOutOfBuildings(city, body, 13)) {
-      car.x = body.x;
-      car.y = body.y;
-      car.speed *= 0.5;
-    }
-    car.x = Math.max(30, Math.min(city.size - 30, car.x));
-    car.y = Math.max(30, Math.min(3810, car.y));
-    player.x = car.x;
-    player.y = car.y;
-    player.angle = car.angle;
-    player.faceAngle = car.angle;
-    // A shunt: the other car takes a knock and swerves off.
-    for (const other of state.cars) {
-      if (other === car || other.kind === 'parked' || other.wrecked) continue;
-      if (Math.hypot(other.x - car.x, other.y - car.y) < 40) {
-        other.x += (other.x - car.x) * 0.15;
-        other.y += (other.y - car.y) * 0.15;
-        car.speed *= 0.9;
-        state.shake = Math.max(state.shake, 4);
-        if (state.crashCooldown <= 0) {
-          state.crashCooldown = 0.5;
-          events.push({ kind: 'crash' });
-        }
-      }
-    }
-    // Hit-and-run: running someone over is a crime, and worse when a cop sees it.
-    for (const ped of state.peds) {
-      if (ped.down) continue;
-      if (Math.hypot(ped.x - car.x, ped.y - car.y) < 30) {
-        ped.down = true;
-        ped.downTime = 6;
-        addWanted(state, WANTED.hitPed);
-        // Worse when a cop sees it happen.
-        if (state.cops.some((cop) => Math.hypot(cop.x - player.x, cop.y - player.y) < 500)) {
-          addWanted(state, 1);
-        }
-        scareNearby(state.peds, ped.x, ped.y, 200);
-        addParticles(state, ped.x, ped.y, 6, '#ffd24a');
-        events.push({ kind: 'hit-ped' });
-      }
-    }
+/** Tembak sekali (pistol atau shotgun) ke arah aim; ada cooldown dan amunisi. */
+function tryShoot(world, input) {
+  const s = world.state;
+  const p = s.player;
+  if (s.shootCooldown > 0) return;
+  if (!p.hasPistol && !p.hasShotgun) return;
+  if (p.weapon === 'shotgun' && p.hasShotgun) {
+    if (p.ammo < SHOTGUN.ammoCost) return;
+    fireShotgun(s.bullets, p.x, p.y, p.aimAngle, 'player');
+    p.ammo -= SHOTGUN.ammoCost;
+    s.shootCooldown = 0.45;
   } else {
-    const speed = input.run ? PLAYER.runSpeed : PLAYER.walkSpeed;
-    let mx = input.moveX || 0;
-    let my = input.moveY || 0;
-    const len = Math.hypot(mx, my);
-    if (len > 1) {
-      mx /= len;
-      my /= len;
-    }
-    player.x += mx * speed * dt;
-    player.y += my * speed * dt;
-    if (len > 0.1) player.faceAngle = Math.atan2(my, mx);
-    player.angle = player.faceAngle;
-    pushOutOfBuildings(city, player, PLAYER.radius);
-    player.x = Math.max(20, Math.min(city.size - 20, player.x));
-    player.y = Math.max(20, Math.min(3800, player.y));
-    // Stealing: hold E near a car for 0.6 s.
-    let target = null;
-    let best = 64;
-    for (const c of state.cars) {
-      if (c.kind !== 'parked' && c.kind !== 'traffic') continue;
-      const d = Math.hypot(c.x - player.x, c.y - player.y);
-      if (d < best) {
-        best = d;
-        target = c;
-      }
-    }
-    if (target && input.interactHeld) {
-      player.stealProgress += dt;
-      player.stealTarget = target;
-      if (player.stealProgress >= CAR.stealTime) enterCar(state, target, events);
-    } else {
-      player.stealProgress = 0;
-      player.stealTarget = null;
-    }
+    if (p.ammo <= 0) return;
+    fireBullet(s.bullets, p.x, p.y, p.aimAngle, 'player', PLAYER.pistolDamage);
+    p.ammo -= 1;
+    s.shootCooldown = PLAYER.pistolCooldown;
+  }
+  addWanted(world, WANTED.shoot);
+}
+
+/** Semua sistem selain pemain: lalu lintas, pejalan kaki, musuh, peluru, polisi,
+ *  helikopter, roadblock, balapan, delivery, koleksi, pickup, pendinginan wanted,
+ *  kamera, toast, banner, dan partikel. */
+function updateWorld(world, dt, input) {
+  const s = world.state;
+
+  if (wantedHeli(s.player.wanted)) {
+    if (!s.heli) s.heli = createHeli(s.player.x, s.player.y);
+  } else if (s.heli) {
+    s.heli = null;
+  }
+  if (s.heli) updateHeli(s.heli, s.player, dt);
+
+  const targetCops = wantedCarCount(s.player.wanted);
+  let guard = 0;
+  while (s.cops.length < targetCops && guard < 20) {
+    guard += 1;
+    const car = spawnCopCar(s.city, s.random, s.player.x, s.player.y);
+    if (car) s.cops.push(car);
+  }
+  while (s.cops.length > targetCops) s.cops.pop();
+
+  updateRoadblocks(s.roadblocks, s.cars, s.player, s.player.wanted, dt, s.city, s.random);
+  updateTraffic(s.city, s.cars, dt, s.random);
+  updatePedestrians(s.peds, s.city, dt);
+  updateEnemies(s.enemies, s.player, s.city, s.bullets, dt, s.random, (damage) => damagePlayer(world, damage));
+  const bulletEvents = updateBullets(s.bullets, s.city, s.cars, s.peds, s.enemies, s.player, dt);
+  for (const event of bulletEvents) {
+    if (event.kind === 'hit-player') damagePlayer(world, event.damage);
+    else if (event.kind === 'hit-ped') addWanted(world, WANTED.hitPed);
+    else if (event.kind === 'spark') spawnParticles(s, event.x, event.y, 6, '#ffd76a');
   }
 
-  // Getting out, and saving at the Safehouse, are the E key's other jobs.
-  if (player.car && input.interact) {
-    leaveCar(state);
-  } else if (!player.car && state.safehouseOwned && input.interact) {
-    const safehouse = landmark(city, 'safehouse');
-    if (Math.hypot(player.x - safehouse.x, player.y - safehouse.y) < 80) {
-      player.health = 100;
-      state.toasts.push({ text: 'Saved at the Safehouse', time: 2 });
-      events.push({ kind: 'save' });
-    }
-  }
-
-  // --- Fighting ---------------------------------------------------------------
-  if (!player.car && input.punch && player.punchCooldown <= 0) {
-    player.punchCooldown = PLAYER.punchCooldown;
-    const hit = punch(player, player.faceAngle, [...state.enemies, ...state.peds], PLAYER.punchRange, PLAYER.punchDamage);
-    if (hit.length > 0) {
-      events.push({ kind: 'punch' });
-      for (const target of hit) {
-        if (target.kind === 'civilian' || target.kind === 'gang') addWanted(state, WANTED.hitPed);
-      }
-      scareNearby(state.peds, player.x, player.y, 200);
-    }
-  }
-  if (input.shoot && player.shootCooldown <= 0 && player.hasPistol && player.ammo > 0) {
-    const angle = Math.atan2((input.aimY ?? player.y) - player.y, (input.aimX ?? player.x) - player.x);
-    player.aimAngle = angle;
-    player.faceAngle = angle;
-    if (player.weapon === 'shotgun' && player.hasShotgun) {
-      fireShotgun(state.bullets, player.x, player.y, angle, 'player');
-      player.ammo = Math.max(0, player.ammo - SHOTGUN.ammoCost);
-      player.shootCooldown = 0.5;
-      events.push({ kind: 'shot', weapon: 'shotgun' });
-    } else {
-      fireBullet(state.bullets, player.x, player.y, angle, 'player', PLAYER.pistolDamage);
-      player.ammo -= 1;
-      player.shootCooldown = PLAYER.pistolCooldown;
-      events.push({ kind: 'shot', weapon: 'pistol' });
-    }
-    if (state.cops.some((cop) => Math.hypot(cop.x - player.x, cop.y - player.y) < 600)) {
-      addWanted(state, WANTED.shoot);
-    }
-    scareNearby(state.peds, player.x, player.y, 260);
-  }
-  if (input.weapon && player.hasShotgun) {
-    player.weapon = player.weapon === 'shotgun' ? 'pistol' : 'shotgun';
-    events.push({ kind: 'click' });
-  }
-  if (input.horn) events.push({ kind: 'horn' });
-
-  // --- Bullets ----------------------------------------------------------------
-  const bulletEvents = updateBullets(
-    state.bullets, city,
-    [...state.cars, ...state.cops],
-    state.peds, state.enemies, player, dt,
-  );
-  for (const ev of bulletEvents) {
-    if (ev.kind === 'hit-player') damagePlayer(state, ev.damage, events);
-    else if (ev.kind === 'hit-car' && ev.car.kind === 'police' && ev.car.wrecked) addWanted(state, WANTED.killCop);
-    else if (ev.kind === 'hit-ped') addWanted(state, WANTED.hitPed);
-    else if (ev.kind === 'spark') addParticles(state, ev.x, ev.y, 4, '#ffe9a8');
-    else if (ev.kind === 'enemy-down') events.push({ kind: 'enemy-down' });
-  }
-  if (player.car && player.car.wrecked) {
-    const car = player.car;
-    car.kind = 'parked';
-    player.car = null;
-    damagePlayer(state, 15, events);
-    state.shake = 8;
-    events.push({ kind: 'crash' });
-  }
-  state.cops = state.cops.filter((cop) => !cop.wrecked);
-
-  // --- The rest of the city ----------------------------------------------------
-  updateEnemies(state.enemies, player, city, state.bullets, dt, state.random, (damage) => damagePlayer(state, damage, events));
-  updateTraffic(city, state.cars, dt, state.random);
-  updatePedestrians(state.peds, city, dt);
-
-  const policeResult = updatePolice(city, state.cops, player, player.car, dt);
+  const policeResult = updatePolice(s.city, s.cops, s.player, s.player.car, dt);
   if (policeResult === 'busted') {
-    state.banner = { title: 'Busted', sub: 'The cops took you in — $200 fine', time: 3 };
-    player.money = Math.max(0, player.money - 200);
-    player.wanted = 0;
-    player.health = 100;
-    player.invulnerable = 2;
-    if (player.car) {
-      player.car.kind = 'parked';
-      player.car = null;
-    }
-    player.x = 512;
-    player.y = 572;
-    state.cops.length = 0;
-    events.push({ kind: 'busted' });
+    handleBusted(world);
   } else if (policeResult && policeResult.type === 'ram') {
-    state.shake = Math.max(state.shake, 5);
-    events.push({ kind: 'ram', damage: policeResult.damage });
-    if (player.car && player.car.wrecked) {
-      player.car.kind = 'parked';
-      player.car = null;
-      damagePlayer(state, 10, events);
-      state.shake = 8;
+    s.shake = Math.max(s.shake, 6);
+  }
+
+  const raceEvents = updateRace(s.race, { x: s.player.x, y: s.player.y }, dt);
+  for (const event of raceEvents) {
+    if (event.kind === 'race-checkpoint') {
+      s.raceMarker = raceTarget(s.race);
+      addToast(s, `Checkpoint ${event.label} — ${event.left} left`);
+    } else if (event.kind === 'race-won') {
+      s.player.money += event.amount;
+      s.stats.earned += event.amount;
+      addToast(s, `Race won — $${event.amount}`);
+      s.raceMarker = null;
+      if (s.missions.active && s.missions.index === 6) advanceMission(world);
+    } else if (event.kind === 'race-lost') {
+      s.raceMarker = null;
+      addToast(s, 'Race lost — the Grand Prix is still open');
     }
   }
 
-  if (wantedHeli(player.wanted)) {
-    if (!state.heli) state.heli = createHeli(player.x - 200, player.y - 200);
-    updateHeli(state.heli, player, dt);
-  } else {
-    state.heli = null;
-  }
-
-  const roadblockEvent = updateRoadblocks(state.roadblocks, state.cars, player, player.wanted, dt, city, state.random);
-  if (roadblockEvent === 'roadblock') events.push({ kind: 'roadblock' });
-
-  // The cop count follows the wanted level: two new ones a frame, excess ones drive off.
-  const want = wantedCarCount(player.wanted);
-  let spawned = 0;
-  while (state.cops.length < want && spawned < 2) {
-    const cop = spawnCopCar(city, state.random, player.x, player.y);
-    if (!cop) break;
-    state.cops.push(cop);
-    spawned += 1;
-  }
-  if (state.cops.length > want) {
-    state.cops.sort((a, b) => Math.hypot(a.x - player.x, a.y - player.y) - Math.hypot(b.x - player.x, b.y - player.y));
-    state.cops.length = want;
-  }
-
-  // --- The race -----------------------------------------------------------------
-  const raceEvents = updateRace(state.race, { x: player.x, y: player.y }, dt);
-  for (const ev of raceEvents) {
-    if (ev.kind === 'race-checkpoint') {
-      state.toasts.push({ text: `Checkpoint — ${ev.left} left`, time: 2 });
-      events.push(ev);
-    } else if (ev.kind === 'race-won') {
-      payPlayer(state, RACE.reward);
-      state.toasts.push({ text: `Race won — +$${RACE.reward}`, time: 3 });
-      events.push(ev);
-    } else if (ev.kind === 'race-lost') {
-      state.toasts.push({ text: 'Race lost — the clock ran out', time: 3 });
-      events.push(ev);
-    }
-  }
-  state.raceMarker = raceTarget(state.race);
-  state.missions.raceTarget = state.raceMarker;
-
-  // --- Deliveries and fares ------------------------------------------------------
-  if (state.delivery) {
-    const ctx = { x: player.x, y: player.y, interact: !!input.interact, deliveryPaid: 0 };
-    const dev = updateDelivery(state.delivery, ctx, dt);
-    if (dev) {
-      if (dev.kind === 'delivery-picked') {
-        // The package goes on foot: step out of the car.
-        if (player.car) {
-          player.car.kind = 'parked';
-          player.car = null;
-        }
-        state.toasts.push({ text: `Deliver to ${dev.label} — ${dev.seconds}s`, time: 3 });
-        events.push(dev);
-      } else if (dev.kind === 'delivery-done') {
-        payPlayer(state, dev.amount);
-        state.delivery = null;
-        state.toasts.push({ text: `Delivery done — +$${dev.amount}`, time: 3 });
-        events.push(dev);
-      } else if (dev.kind === 'delivery-lost') {
-        state.delivery = null;
-        state.toasts.push({ text: 'Delivery lost — too slow', time: 3 });
-        events.push(dev);
+  if (s.delivery) {
+    const deliveryCtx = { x: s.player.x, y: s.player.y, interact: input.interact, deliveryPaid: 0 };
+    const event = updateDelivery(s.delivery, deliveryCtx, dt);
+    if (event) {
+      if (event.kind === 'delivery-picked') {
+        if (s.player.car) exitCar(world);
+        addToast(s, 'Package picked up');
+      } else if (event.kind === 'delivery-done') {
+        s.player.money += event.amount;
+        s.stats.earned += event.amount;
+        addToast(s, `Delivery paid — $${event.amount}`);
+        s.delivery = null;
+      } else if (event.kind === 'delivery-lost') {
+        addToast(s, 'Delivery expired');
+        s.delivery = null;
       }
     }
   }
-  const fare = state.missions.fare;
-  if (fare) {
-    if (!fare.pickedUp && player.car && Math.hypot(player.x - fare.from.x, player.y - fare.from.y) < 90) {
-      fare.pickedUp = true;
-      state.toasts.push({ text: `Fare to ${fare.to.label}`, time: 3 });
-      events.push({ kind: 'fare-picked', label: fare.to.label });
-    } else if (fare.pickedUp && Math.hypot(player.x - fare.to.x, player.y - fare.to.y) < 100) {
-      payPlayer(state, fare.price);
-      state.missions.fare = null;
-      state.toasts.push({ text: `Fare paid — +$${fare.price}`, time: 3 });
-      events.push({ kind: 'fare-done', amount: fare.price });
-    }
-  }
 
-  // --- Pickups and hidden packages ----------------------------------------------
-  for (const pickup of state.pickups) {
-    if (pickup.taken) continue;
-    if (Math.hypot(player.x - pickup.x, player.y - pickup.y) < 30) {
-      pickup.taken = true;
-      if (pickup.kind === 'health') {
-        player.health = Math.min(100, player.health + 50);
-        state.toasts.push({ text: 'Health +50', time: 2 });
-      } else if (pickup.kind === 'ammo') {
-        player.ammo = Math.min(PLAYER.maxAmmo, player.ammo + 24);
-        state.toasts.push({ text: 'Ammo +24', time: 2 });
-      } else {
-        payPlayer(state, 100);
-        state.toasts.push({ text: 'Cash +$100', time: 2 });
-      }
-      events.push({ kind: 'pickup', pickup: pickup.kind });
-    }
-  }
-  const found = collectibleNear(state.collectibles, player.x, player.y);
+  const found = collectibleNear(s.collectibles, s.player.x, s.player.y);
   if (found) {
     const amount = 100 + (found.bonus || 0);
-    payPlayer(state, amount);
-    state.toasts.push({
-      text: found.bonus
-        ? `Hidden package ${found.found}/12 — +$${amount} (set bonus!)`
-        : `Hidden package ${found.found}/12 — +$${amount}`,
-      time: 3,
-    });
-    events.push({ kind: 'collectible', found: found.found, bonus: found.bonus, amount });
+    s.player.money += amount;
+    s.stats.earned += amount;
+    addToast(s, found.bonus ? `All packages found — bonus $${amount}` : `Package found — $${amount}`);
   }
+  updatePickups(world);
 
-  // --- The heat cools -------------------------------------------------------------
-  if (player.wanted > 0) {
-    state.wantedQuiet += dt;
-    if (state.wantedQuiet > WANTED.decayDelay) {
-      state.wantedDecay += dt;
-      if (state.wantedDecay >= WANTED.decayStep) {
-        state.wantedDecay = 0;
-        player.wanted -= 1;
-        if (player.wanted === 0) state.wantedQuiet = 0;
-      }
+  updateWantedDecay(world, dt);
+
+  s.camera.zoom = s.player.car ? VIEW.zoomCar : VIEW.zoomFoot;
+  s.camera.x = s.player.x;
+  s.camera.y = s.player.y;
+
+  updateToasts(s, dt);
+  if (s.banner) {
+    s.banner.time -= dt;
+    if (s.banner.time <= 0) s.banner = null;
+  }
+  s.shake = Math.max(0, s.shake - dt * 20);
+  updateParticles(s, dt);
+
+  if (s.player.health <= 0) handleWasted(world);
+}
+
+/** Pickup di dekat pemain: nyawa, amunisi, atau uang tunai $100. */
+function updatePickups(world) {
+  const s = world.state;
+  const p = s.player;
+  for (const pickup of s.pickups) {
+    if (pickup.taken) continue;
+    if (Math.hypot(p.x - pickup.x, p.y - pickup.y) >= 34) continue;
+    pickup.taken = true;
+    if (pickup.kind === 'health') {
+      p.health = Math.min(PLAYER.health, p.health + 50);
+      addToast(s, 'Health +50');
+    } else if (pickup.kind === 'ammo') {
+      p.ammo = Math.min(PLAYER.maxAmmo, p.ammo + 24);
+      addToast(s, 'Ammo +24');
+    } else {
+      p.money += 100;
+      s.stats.earned += 100;
+      addToast(s, 'Cash +$100');
     }
   }
+}
 
-  // --- Camera and the day's little decays -----------------------------------------
-  const cam = state.camera;
-  const targetZoom = player.car ? VIEW.zoomCar : VIEW.zoomFoot;
-  cam.zoom += (targetZoom - cam.zoom) * Math.min(1, 3 * dt);
-  cam.x += (player.x - cam.x) * Math.min(1, 5 * dt);
-  cam.y += (player.y - cam.y) * Math.min(1, 5 * dt);
-
-  state.toasts = state.toasts.filter((toast) => (toast.time -= dt) > 0);
-  if (state.banner) {
-    state.banner.time -= dt;
-    if (state.banner.time <= 0) state.banner = null;
+/**
+ * Wanted mendingin sendiri kalau pemain berhenti berbuat onar: turun satu
+ * tingkat setelah 18 detik, lalu satu tingkat tiap 14 detik. Selama misi 8
+ * (bertahan dari helikopter) pendinginan ditahan supaya heli tetap di udara.
+ */
+function updateWantedDecay(world, dt) {
+  const s = world.state;
+  if (s.player.wanted <= 0) return;
+  if (s.missions.active && s.missions.index === 8) {
+    s.wantedTimer = WANTED.decayDelay;
+    return;
   }
-  state.shake = Math.max(0, state.shake - dt * 20);
+  s.wantedTimer = (s.wantedTimer ?? WANTED.decayDelay) - dt;
+  if (s.wantedTimer <= 0) {
+    s.player.wanted = Math.max(0, s.player.wanted - 1);
+    s.wantedTimer = WANTED.decayStep;
+  }
+}
+
+/** Pemeriksaan penyelesaian misi dan perubahan step, sekali per langkah. */
+function updateStory(world, dt, input) {
+  const s = world.state;
+  const m = s.missions;
+  if (!m.active) return;
+  const p = s.player;
+  switch (m.index) {
+    case 0:
+      break; // selesai saat mencuri mobil (stealCar)
+    case 1:
+      if (m.step === 1) {
+        const bank = landmark(s.city, 'bank');
+        if (Math.hypot(p.x - bank.x, p.y - bank.y) < 100) advanceMission(world);
+      }
+      break;
+    case 2:
+      if (s.enemies.length > 0 && s.enemies.every((e) => e.down)) advanceMission(world);
+      break;
+    case 3:
+      if (p.wanted === 0) advanceMission(world);
+      break;
+    case 4:
+      if (m.step === 1) {
+        const garage = landmark(s.city, 'garage');
+        if (Math.hypot(p.x - garage.x, p.y - garage.y) < 100) advanceMission(world);
+      }
+      break;
+    case 5:
+      if (m.step === 1) {
+        const garage = landmark(s.city, 'garage');
+        if (Math.hypot(p.x - garage.x, p.y - garage.y) < 100) advanceMission(world);
+      }
+      break;
+    case 6:
+      break; // selesai saat balapan dimenangkan (event race-won)
+    case 7:
+      if (s.enemies.length > 0 && s.enemies.every((e) => e.down)) {
+        s.safehouseOwned = true;
+        p.hasShotgun = true;
+        addToast(s, 'Safehouse yours — shotgun unlocked');
+        advanceMission(world);
+      }
+      break;
+    case 8:
+      s.missionTimer = (s.missionTimer || 0) - dt;
+      if (s.missionTimer <= 0.001) advanceMission(world);
+      break;
+    case 9:
+      if (m.step === 0) {
+        const port = landmark(s.city, 'port');
+        if (Math.hypot(p.x - port.x, p.y - port.y) < 100) {
+          setMissionStep(world, 1);
+          addToast(s, 'Port Gate — clear it');
+        }
+      } else if (m.step === 1) {
+        if (s.enemies.length > 0 && s.enemies.every((e) => e.down)) {
+          setMissionStep(world, 2);
+          addToast(s, 'Gate clear — get to the garage');
+        }
+      } else if (m.step === 2) {
+        const garage = landmark(s.city, 'garage');
+        if (Math.hypot(p.x - garage.x, p.y - garage.y) < 100) advanceMission(world);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+/** Setelah cerita selesai: fare (20 detik) dan delivery (30 detik) ditawarkan
+ *  bergantian, lalu diantar sampai dibayar. */
+function updatePostStory(world, dt) {
+  const s = world.state;
+  const m = s.missions;
+  if (m.active) return;
+  if (!m.fare) {
+    s.fareTimer = (s.fareTimer || 0) + dt;
+    if (s.fareTimer >= 20) {
+      s.fareTimer = 0;
+      m.fare = offerFare(s.city, s.random);
+      if (m.fare) addToast(s, `Fare: pick up at ${m.fare.from.label || 'the pickup'}`);
+    }
+  }
+  if (!s.delivery) {
+    s.deliveryTimer = (s.deliveryTimer || 0) + dt;
+    if (s.deliveryTimer >= 30) {
+      s.deliveryTimer = 0;
+      s.delivery = offerDelivery(s.city, s.random);
+      if (s.delivery) addToast(s, 'Delivery available — pick it up (E)');
+    }
+  }
+  if (m.fare) {
+    const fare = m.fare;
+    const p = s.player;
+    if (!fare.pickedUp) {
+      if (p.car && Math.hypot(p.x - fare.from.x, p.y - fare.from.y) < 90) {
+        fare.pickedUp = true;
+        addToast(s, `Fare picked up — drop off at ${fare.to.label || 'the destination'}`);
+      }
+    } else if (p.car && Math.hypot(p.x - fare.to.x, p.y - fare.to.y) < 100) {
+      s.player.money += fare.price;
+      s.stats.earned += fare.price;
+      addToast(s, `Fare paid — $${fare.price}`);
+      m.fare = null;
+      s.fareTimer = 0;
+    }
+  }
+}
+
+/** Satu fare taksi: dua landmark berbeda, harga dari jaraknya. */
+function offerFare(city, random) {
+  const keys = Object.keys(city.landmarks);
+  if (keys.length < 2) return null;
+  const fromKey = keys[Math.floor(random() * keys.length)];
+  let toKey = keys[Math.floor(random() * keys.length)];
+  let guard = 0;
+  while (toKey === fromKey && guard < 10) {
+    toKey = keys[Math.floor(random() * keys.length)];
+    guard += 1;
+  }
+  if (toKey === fromKey) return null;
+  const from = city.landmarks[fromKey];
+  const to = city.landmarks[toKey];
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  const price = 50 + Math.round(distance / 100) * 10;
+  return {
+    from: { x: from.x, y: from.y, label: from.label },
+    to: { x: to.x, y: to.y, label: to.label },
+    price,
+    pickedUp: false,
+  };
+}
+
+/**
+ * Jalankan setup untuk (index, step) saat ini, sekali saja per kombinasi.
+ * Dipanggil di awal dan di akhir tiap langkah: kalau cerita mengubah step di
+ * tengah langkah, setup step yang baru langsung jalan di langkah yang sama —
+ * musuh misi 9 muncul di langkah yang sama saat pemain mencapai Port Gate.
+ */
+function runMissionSetup(world) {
+  const s = world.state;
+  const m = s.missions;
+  if (!m.active) return;
+  const key = `${m.index}:${m.step}`;
+  if (m.setup === key) return;
+  m.setup = key;
+  switch (m.index) {
+    case 0:
+      setMissionMessage(m, MISSION_BRIEFINGS[0]);
+      break;
+    case 1:
+      setMissionMessage(m, MISSION_BRIEFINGS[1]);
+      break;
+    case 2:
+      spawnMissionEnemies(s, 3584, 2560, ['viper', 'viper', 'viper', 'viper']);
+      setMissionMessage(m, MISSION_BRIEFINGS[2]);
+      break;
+    case 3:
+      world.setWanted(3);
+      setMissionMessage(m, MISSION_BRIEFINGS[3]);
+      break;
+    case 4:
+      s.vaultTimer = 0;
+      setMissionMessage(m, MISSION_BRIEFINGS[4]);
+      break;
+    case 5:
+      spawnBroadcastVan(s);
+      setMissionMessage(m, MISSION_BRIEFINGS[5]);
+      break;
+    case 6:
+      startRace(s.race, s.city, s.random);
+      s.raceMarker = raceTarget(s.race);
+      setMissionMessage(m, MISSION_BRIEFINGS[6]);
+      break;
+    case 7:
+      spawnMissionEnemies(s, 1024, 3072, ['viper', 'viper', 'viper', 'enforcer']);
+      setMissionMessage(m, MISSION_BRIEFINGS[7]);
+      break;
+    case 8:
+      world.setWanted(4);
+      s.missionTimer = 75;
+      setMissionMessage(m, MISSION_BRIEFINGS[8]);
+      break;
+    case 9:
+      if (m.step === 1) {
+        spawnMissionEnemies(s, 2560, 3584, ['viper', 'viper', 'viper', 'viper']);
+      }
+      setMissionMessage(m, MISSION_BRIEFINGS[9]);
+      break;
+    default:
+      break;
+  }
+}
+
+/** Munculkan musuh misi di sekitar satu titik, tetap di atas jalan/trotoar. */
+function spawnMissionEnemies(state, cx, cy, kinds) {
+  const offsets = [[0, 0], [40, 0], [-40, 0], [0, 40]];
+  kinds.forEach((kind, i) => {
+    const [dx, dy] = offsets[i % offsets.length];
+    state.enemies.push(createEnemy(state.random, cx + dx, cy + dy, kind));
+  });
+}
+
+/** Van siaran misi 5: mobil parkir di Observatory yang bisa dicuri pemain. */
+function spawnBroadcastVan(state) {
+  const observatory = landmark(state.city, 'observatory');
+  const van = createCar(state.random, observatory.x, observatory.y, 0, 'van', 'parked');
+  van.missionVan = true;
+  state.cars.push(van);
+  return van;
+}
+
+/** Selesaikan misi aktif: bayar, maju ke misi berikut, atau tutup cerita. */
+function advanceMission(world) {
+  const s = world.state;
+  const m = s.missions;
+  const pay = MISSION_PAY[m.index] || 0;
+  s.player.money += pay;
+  s.stats.earned += pay;
+  addToast(s, `${MISSION_NAMES[m.index]} complete — $${pay}`);
+  m.index += 1;
+  m.step = 0;
+  m.setup = '';
+  if (m.index >= MISSION_NAMES.length) {
+    m.active = false;
+    s.banner = { title: 'The city is yours', sub: 'Story complete — keep driving', time: 4 };
+  } else {
+    s.banner = { title: MISSION_NAMES[m.index], sub: MISSION_BRIEFINGS[m.index], time: 4 };
+  }
+}
+
+/** Pindah ke step berikut dalam misi yang sama (setup step baru akan jalan). */
+function setMissionStep(world, step) {
+  const s = world.state;
+  s.missions.step = step;
+  s.missions.setup = '';
+}
+
+/** Ditangkap polisi: kembali ke garasi, wanted hilang, denda $100. */
+function handleBusted(world) {
+  const s = world.state;
+  const p = s.player;
+  s.banner = { title: 'Busted', sub: 'The cops got you — back to the garage', time: 4 };
+  addToast(s, 'Busted — you lost $100');
+  p.wanted = 0;
+  p.money = Math.max(0, p.money - 100);
+  const garage = landmark(s.city, 'garage');
+  p.x = garage.x;
+  p.y = garage.y + 60;
+  p.car = null;
+  p.health = Math.max(p.health, 50);
+  s.camera.x = p.x;
+  s.camera.y = p.y;
+  s.cops.length = 0;
+  s.heli = null;
+}
+
+/** Nyawa habis: bangun di rumah sakit, wanted hilang, denda $100. */
+function handleWasted(world) {
+  const s = world.state;
+  const p = s.player;
+  s.banner = { title: 'Wasted', sub: 'You woke up at the hospital', time: 4 };
+  addToast(s, 'Wasted — you lost $100');
+  p.health = PLAYER.health;
+  p.wanted = 0;
+  p.money = Math.max(0, p.money - 100);
+  const hospital = landmark(s.city, 'hospital');
+  p.x = hospital.x;
+  p.y = hospital.y + 60;
+  p.car = null;
+  s.camera.x = p.x;
+  s.camera.y = p.y;
+  s.cops.length = 0;
+  s.heli = null;
+}
+
+/** Kurangi umur toast dan pesan misi; hapus yang sudah habis. */
+function updateToasts(state, dt) {
+  for (const toast of state.toasts) toast.time -= dt;
+  state.toasts = state.toasts.filter((t) => t.time > 0);
+  if (state.missions.messageTime > 0) {
+    state.missions.messageTime -= dt;
+    if (state.missions.messageTime <= 0) state.missions.message = '';
+  }
+}
+
+/** Gerakkan partikel (debu, percikan) dan hapus yang sudah mati. */
+function updateParticles(state, dt) {
   for (const particle of state.particles) {
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
     particle.life -= dt;
   }
-  state.particles = state.particles.filter((particle) => particle.life > 0);
-
-  // The story's advance checks run last, so a job can complete in the same step
-  // its condition is met.
-  updateStoryAdvance(state, dt, input, events);
-}
-
-/** Run once when a job (or a job step) starts: spawn its enemies, park its van, set its heat. */
-function updateStorySetup(state) {
-  const m = state.missions;
-  if (!m.active) {
-    // After the story: fares and deliveries keep coming, on a timer.
-    if (!m.fare) {
-      state.fareCooldown -= 1 / 60;
-      if (state.fareCooldown <= 0) {
-        m.fare = offerFare(state.city, state.random);
-        state.fareCooldown = 30;
-      }
-    }
-    if (!state.delivery) {
-      state.deliveryCooldown -= 1 / 60;
-      if (state.deliveryCooldown <= 0) {
-        state.delivery = offerDelivery(state.city, state.random);
-        state.deliveryCooldown = 45;
-      }
-    }
-    return;
-  }
-  const key = `${m.index}:${m.step}`;
-  if (m.setup === key) return;
-  const prevIndex = m.setup ? Number(m.setup.split(':')[0]) : -1;
-  m.setup = key;
-  const job = MISSIONS[m.index];
-  if (!job) return;
-  // A new job gets its briefing; a new step inside a job keeps the message the
-  // advance set for that step.
-  if (m.index !== prevIndex) setMessage(state, job.briefing);
-  const city = state.city;
-  // Spawn a crew on the road through a landmark: four spots along it, the first
-  // an enforcer when the job wants one. A crew that is already there (a staged
-  // scene placed its own) is left alone.
-  const spawnCrew = (x, y, count, enforcers) => {
-    const live = state.enemies.filter((e) => !e.down).length;
-    if (live > 0) {
-      m.spawned = live;
-      return;
-    }
-    const spots = [-150, -50, 50, 150];
-    for (let i = 0; i < count; i += 1) {
-      const kind = i < enforcers ? 'enforcer' : 'viper';
-      state.enemies.push(createEnemy(state.random, x + spots[i], y, kind));
-    }
-    m.spawned = count;
-  };
-  switch (m.index) {
-    case 2:
-      spawnCrew(3584, 2560, 4, 0);
-      break;
-    case 3:
-      setWantedLevel(state, 3);
-      break;
-    case 5: {
-      if (!state.cars.some((c) => c.missionVan)) {
-        const spot = landmark(city, 'observatory');
-        const van = createCar(state.random, spot.x, spot.y, 0, 'van', 'parked');
-        van.missionVan = true;
-        state.cars.push(van);
-      }
-      break;
-    }
-    case 6:
-      startRace(state.race, city, state.random);
-      m.raceStarted = true;
-      m.raceLaps = state.race.laps;
-      m.raceTarget = raceTarget(state.race);
-      state.raceMarker = m.raceTarget;
-      break;
-    case 7:
-      spawnCrew(3072, 2048, 4, 1);
-      break;
-    case 8:
-      setWantedLevel(state, 4);
-      m.surviveTime = 0;
-      break;
-    case 9:
-      if (m.step === 1) spawnCrew(2560, 3584, 4, 1);
-      break;
-    default:
-      break;
-  }
-}
-
-/** Pay out, banner it, and move the story to the next job. */
-function completeMission(state, index, events) {
-  const m = state.missions;
-  const job = MISSIONS[index];
-  payPlayer(state, job.pay);
-  state.banner = { title: job.name, sub: `+$${job.pay}`, time: 3 };
-  state.toasts.push({ text: `${job.name} — +$${job.pay}`, time: 3 });
-  events.push({ kind: 'mission-done', name: job.name, amount: job.pay });
-  m.index = index + 1;
-  m.step = 0;
-  m.setup = '';
-  m.spawned = 0;
-  m.holdTime = 0;
-  m.surviveTime = 0;
-  if (m.index >= MISSIONS.length) {
-    m.active = false;
-    state.banner = { title: 'The city is yours', sub: 'Race, deliver, collect — Solara Bay is open', time: 5 };
-    setMessage(state, 'The city is yours.');
-  } else {
-    setMessage(state, MISSIONS[m.index].briefing);
-  }
-}
-
-/** The advance checks: has the player done what the current job step asks? */
-function updateStoryAdvance(state, dt, input, events) {
-  const m = state.missions;
-  if (!m.active) return;
-  const player = state.player;
-  const near = (x, y, r) => Math.hypot(player.x - x, player.y - y) < r;
-  const liveEnemies = () => state.enemies.filter((e) => !e.down).length;
-  switch (m.index) {
-    case 0:
-      if (player.car) completeMission(state, 0, events);
-      break;
-    case 1: {
-      if (m.step === 0) {
-        const diner = landmark(state.city, 'diner');
-        if (near(diner.x, diner.y, 90) && input.interact) {
-          m.step = 1;
-          m.setup = '';
-          setMessage(state, 'Deliver the package to the Bank.');
-        }
-      } else {
-        const bank = landmark(state.city, 'bank');
-        if (near(bank.x, bank.y, 90)) completeMission(state, 1, events);
-      }
-      break;
-    }
-    case 2:
-      if (m.spawned > 0 && liveEnemies() === 0) completeMission(state, 2, events);
-      break;
-    case 3:
-      if (player.wanted === 0) completeMission(state, 3, events);
-      break;
-    case 4: {
-      if (m.step === 0) {
-        const bank = landmark(state.city, 'bank');
-        if (near(bank.x, bank.y, 90) && input.interactHeld) {
-          m.holdTime += dt;
-          if (m.holdTime >= 3) {
-            m.step = 1;
-            m.setup = '';
-            m.holdTime = 0;
-            setMessage(state, 'Run the bag to the Garage.');
-          }
-        } else {
-          m.holdTime = 0;
-        }
-      } else {
-        const garage = landmark(state.city, 'garage');
-        if (near(garage.x, garage.y, 120)) completeMission(state, 4, events);
-      }
-      break;
-    }
-    case 5: {
-      const van = state.cars.find((c) => c.missionVan);
-      if (m.step === 0) {
-        if (van && player.car === van) {
-          m.step = 1;
-          m.setup = '';
-          setMessage(state, 'Drive the van to the Garage.');
-        }
-      } else {
-        const garage = landmark(state.city, 'garage');
-        if (van && player.car === van && near(garage.x, garage.y, 120)) completeMission(state, 5, events);
-      }
-      break;
-    }
-    case 6:
-      if (m.raceStarted && !state.race.active && state.race.laps === m.raceLaps) {
-        // The clock ran out: run it back.
-        startRace(state.race, state.city, state.random);
-        state.toasts.push({ text: 'The Grand Prix is on again', time: 3 });
-      }
-      if (state.race.laps > m.raceLaps) completeMission(state, 6, events);
-      break;
-    case 7:
-      if (m.spawned > 0 && liveEnemies() === 0) {
-        state.safehouseOwned = true;
-        state.player.hasShotgun = true;
-        completeMission(state, 7, events);
-      }
-      break;
-    case 8:
-      // The heat never cools while the helicopter is up.
-      state.wantedQuiet = 0;
-      if (player.wanted < 4) setWantedLevel(state, 4);
-      m.surviveTime += dt;
-      if (m.surviveTime >= 75) completeMission(state, 8, events);
-      break;
-    case 9: {
-      if (m.step === 0) {
-        const port = landmark(state.city, 'port');
-        if (near(port.x, port.y, 120)) {
-          m.step = 1;
-          m.setup = '';
-        }
-      } else if (m.step === 1) {
-        if (m.spawned > 0 && liveEnemies() === 0) {
-          m.step = 2;
-          m.setup = '';
-          setMessage(state, 'Get away — reach the Garage.');
-        }
-      } else {
-        const garage = landmark(state.city, 'garage');
-        if (near(garage.x, garage.y, 120)) completeMission(state, 9, events);
-      }
-      break;
-    }
-    default:
-      break;
-  }
-  // A step that just changed gets its setup in this same step, so its enemies,
-  // its van, or its heat exist the moment the step begins.
-  if (m.setup !== `${m.index}:${m.step}`) updateStorySetup(state);
-}
-
-/** The save: the seed plus everything a fresh state would not know. */
-function serializeState(state) {
-  return JSON.stringify({
-    seed: state.seed,
-    frames: state.frames,
-    time: state.time,
-    player: {
-      x: state.player.x, y: state.player.y, faceAngle: state.player.faceAngle,
-      money: state.player.money, health: state.player.health, wanted: state.player.wanted,
-      ammo: state.player.ammo, hasPistol: state.player.hasPistol, hasShotgun: state.player.hasShotgun,
-      weapon: state.player.weapon,
-    },
-    missions: {
-      index: state.missions.index, step: state.missions.step, setup: state.missions.setup,
-      active: state.missions.active, message: state.missions.message, messageTime: state.missions.messageTime,
-      fare: state.missions.fare, raceLaps: state.missions.raceLaps, raceStarted: state.missions.raceStarted,
-      holdTime: state.missions.holdTime, surviveTime: state.missions.surviveTime, spawned: state.missions.spawned,
-    },
-    race: {
-      active: state.race.active, index: state.race.index, timer: state.race.timer,
-      checkpoints: state.race.checkpoints, laps: state.race.laps,
-    },
-    collectibles: state.collectibles.map((c) => c.taken),
-    pickups: state.pickups.map((p) => p.taken),
-    safehouseOwned: state.safehouseOwned,
-    stats: state.stats,
-  });
-}
-
-export function createWorld(seed = 11) {
-  const world = {
-    seed,
-    state: null,
-    city: null,
-
-    /** Rebuild the world from its seed, into the same state object it already has. */
-    reset() {
-      const next = freshState(world.seed);
-      const current = world.state;
-      for (const key of Object.keys(current)) {
-        if (!(key in next)) delete current[key];
-      }
-      for (const key of Object.keys(next)) {
-        current[key] = next[key];
-      }
-      world.city = current.city;
-    },
-
-    step(dt, input) {
-      const events = [];
-      stepWorld(world.state, dt, input || {}, events);
-      return events;
-    },
-
-    save() {
-      return serializeState(world.state);
-    },
-
-    load(data) {
-      const saved = JSON.parse(data);
-      world.seed = saved.seed;
-      world.reset();
-      const s = world.state;
-      s.frames = saved.frames || 0;
-      s.time = saved.time;
-      Object.assign(s.player, saved.player);
-      s.player.car = null;
-      s.player.invulnerable = 0;
-      s.player.punchCooldown = 0;
-      s.player.shootCooldown = 0;
-      s.player.stealProgress = 0;
-      s.player.stealTarget = null;
-      Object.assign(s.missions, saved.missions);
-      s.missions.raceTarget = null;
-      Object.assign(s.race, saved.race);
-      s.raceMarker = raceTarget(s.race);
-      s.missions.raceTarget = s.raceMarker;
-      saved.collectibles.forEach((taken, i) => {
-        if (s.collectibles[i]) s.collectibles[i].taken = taken;
-      });
-      saved.pickups.forEach((taken, i) => {
-        if (s.pickups[i]) s.pickups[i].taken = taken;
-      });
-      s.safehouseOwned = saved.safehouseOwned;
-      s.stats = saved.stats;
-    },
-
-    placePlayer(x, y) {
-      const s = world.state;
-      const p = s.player;
-      if (p.car) {
-        p.car.kind = 'parked';
-        p.car = null;
-      }
-      p.x = x;
-      p.y = y;
-    },
-
-    giveCar(type, x, y, angle) {
-      const s = world.state;
-      const p = s.player;
-      if (p.car) {
-        p.car.kind = 'parked';
-        p.car = null;
-      }
-      const car = createCar(s.random, x, y, angle, type, 'player');
-      s.cars.push(car);
-      p.car = car;
-      p.x = x;
-      p.y = y;
-      p.angle = angle;
-      p.faceAngle = angle;
-      return car;
-    },
-
-    setWanted(level) {
-      setWantedLevel(world.state, level);
-    },
-
-    spawnCopsNow(count) {
-      const s = world.state;
-      for (let i = 0; i < count; i += 1) {
-        const cop = spawnCopCar(s.city, s.random, s.player.x, s.player.y);
-        if (!cop) break;
-        s.cops.push(cop);
-      }
-    },
-
-    /** Start the story over from job one. The title screen calls this on Space. */
-    beginStory() {
-      Object.assign(world.state.missions, createMissions());
-    },
-  };
-  world.state = freshState(seed);
-  world.city = world.state.city;
-  return world;
+  state.particles = state.particles.filter((p) => p.life > 0);
 }
